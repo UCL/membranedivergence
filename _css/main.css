@@ -1,0 +1,185 @@
+img#logo, ul#menu li a:hover, html { background: #112f4b url('../_img/background_blue.png'); }
+
+body
+{
+	margin: 20px auto;
+	width: 1000px;
+	font-size: 18px;
+	font: 75% "Trebuchet MS", sans-serif;
+	font-weight: 300;
+	background: white;
+	padding: 20px 40px;
+	border-radius:5px;
+}
+
+.hidden {
+	display: none;
+}
+
+.parval {
+	border: 0;
+	color: #f6931f; /* live orange */
+	font-weight: bold;
+	background: transparent;
+}
+
+.var {
+	font-size: 115%;
+	color: #246;
+}
+
+table.param_table {
+	width:100%;
+}
+
+table.param_table td {
+	padding: 0px 10px;
+	width: 50%;
+}
+
+#G {
+	width: 600px;
+	height: 600px;
+	margin: 10px  auto;
+	background: #003147;
+	z-index: 1000;
+	position: relative;
+}
+
+#G_Rock {
+	background: #FDA url("../_img/rock.jpg") repeat fixed;
+	height: 100px;
+	width: 600px;
+	padding:0;
+	margin:0;
+	position:absolute;
+	bottom:0px;
+	left:0px;
+	vertical-align: bottom;
+}
+
+#G_ProtoCell {
+	/*-moz-border-radius: 50px/50px;*/
+    /*-webkit-border-radius: 50px 50px;*/
+    border-radius: 470px/470px;
+    border:solid 15px #FFE4C4;
+    
+    background-color: #6D9BC3;
+    /*background: url("_img/ProtoCell.png");*/
+	position:absolute;
+	top:50px;
+	left:50px;
+	width: 470px;
+	height: 470px;
+	
+}
+
+#G p {
+	line-height: 150%;
+	padding: 0;
+	margin: 0;
+}
+
+#G_L_RockTexts {
+	position: absolute;
+	left:0px;
+	bottom:0px;
+	padding: 10px;
+	color: #444;
+}
+
+#G_R_RockTexts {
+	position: absolute;
+	right:0px;
+	bottom:0px;
+	padding: 10px;
+	color: #444;
+}
+
+#G_OceanTexts {
+	color: #DEF;
+	padding: 10px;
+}
+
+#G_ATPaseTexts {
+	width: 100%;
+	margin-top: 20px;
+	text-align: center;
+	color: #FFF;
+}
+
+#G_PCvars {
+	position: relative;
+	margin: auto;
+	vertical-align: middle;
+	/*left:70px;*/
+	top:10px;
+	color: #FFF;
+	/*border: 3px #f6931f solid;
+	border-radius: 10px;
+	padding: 5px;*/
+	width: 300px;
+}
+
+#G_ProtoCellTexts {
+	position: absolute;
+	width: 100%;
+	text-align: center;
+	bottom:20px;
+	color: #FFF;
+}
+
+#G_sparklineHolder {
+	height: 175px;
+	border: 1px solid #888;
+	background: #123;
+}
+#G_sparklineHolder span {
+	padding: 0 20px;
+}
+#G_sparklineHolder p {
+	text-align: center;
+}
+/*/////////////////////*/
+/*     jQuery UI       */ 
+/*/////////////////////*/
+
+.demoHeaders {
+	margin-top: 2em;
+}
+#dialog-link {
+	padding: .4em 1em .4em 20px;
+	text-decoration: none;
+	position: relative;
+}
+#dialog-link span.ui-icon {
+	margin: 0 5px 0 0;
+	position: absolute;
+	left: .2em;
+	top: 50%;
+	margin-top: -8px;
+}
+#icons {
+	margin: 0;
+	padding: 0;
+}
+#icons li {
+	margin: 2px;
+	position: relative;
+	padding: 4px 0;
+	cursor: pointer;
+	float: left;
+	list-style: none;
+}
+#icons span.ui-icon {
+	float: left;
+	margin: 0 4px;
+}
+#outputTable {
+		width: 100%;
+		font-size: 75%;
+		text-align: left;
+}
+.fakewindowcontain .ui-widget-overlay {
+	position: absolute;
+}

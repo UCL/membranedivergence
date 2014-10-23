@@ -1,0 +1,16 @@
+This document explains how to use the Membrane Bioenergetics model of Sojo, Lane & Pomiankowski, as published on "A Bioenergetic Basis for Membrane Divergence in Archaea and Bacteria", PLoS Biology (2014).
+
+The code was written by Victor Sojo (v.sojo.11@ucl.ac.uk), designed in collaboration with Nick Lane (n.lane@ucl.ac.uk), and analysed by all three authors.
+
+
+To run the code, just open "index.html" on any web browser (Firefox, Chrome, Safari, Opera... or Internet Explorer if you truly must...).
+
+Select your parameters and click Start, then Iterate.
+
+You can switch on a plotting function by selecting the corresponding checkbox at the end of the parameters tab. You can also choose to produce output in the form of a table to be analysed later. Both of these options make the code run much more slowly, so if you only care about final values, leave the plotting off, and the skip value high (1,000,000).
+
+We are thankful to James Letts at the MRC in Cambridge for suggesting corrections.
+
+Please do contact Victor at v.sojo.11@ucl.ac.uk if you have any suggestions or questions regarding the code or the paper.
+
+(c) University College London - CoMPLEX / GEE - 2014 (c)

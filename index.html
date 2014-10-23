@@ -1,0 +1,2144 @@
+<!doctype html>
+<!---
+	THIS CODE RUNS SIMULATIONS OF A CHEMIOSMOTIC SYSTEM AS PER Sojo, Pomiankowski & Lane (2014)
+	Code was created by Victor Sojo (v.sojo.11@ucl.ac.uk, sojovictor@gmail.com)
+	Please let us know if you wish to use the code in your own research.
+	We will be happy to discuss opportunities for collaboration, or if you have any ideas on how to push this research into new directions.
+	Needless to say, we'd be very thankful if you point us to errors or areas for improvement in the code, the algorithms,
+	or the main ideas in the paper.
+	We are thankful to James Letts at the MRC in Cambridge for suggesting one such correction.
+	Please note that this code was not written for efficiency but for readability.
+	© CoMPLEX/GEE, University College London, 2014 ©
+-->
+ 
+<html lang="us">
+<head>
+	<meta charset="utf-8">
+	<title>..:: Membrane Bioenergetics Model v0.32 :: V&iacute;ctor Sojo ::..</title>
+	
+	<!--link href="css/reset.css" rel="stylesheet"-->
+	<link href="_css/dark_hive/jquery-ui-1.10.0.custom.css" rel="stylesheet">
+	<link href="_css/main.css" rel="stylesheet">
+	<style>
+		
+	</style>
+	<script src="js/jquery-1.9.0.min.js"></script>
+	<script src="js/jquery-ui-1.10.0.custom.min.js"></script>
+	<script src="js/jquery.sparkline.min.js"></script>
+
+	<script>
+		// CONSTANTS
+		var AVOG = 6.022e23; // Avogadro's number
+		var M3_TO_L = 1000;  // 1m3 == 1000 L
+		var M_TO_CM = 100;   // 1m == 100 cm
+		var KW = 1e-14;		 // water equilibrium constant
+		var R = 8.3145e-3;	 // kJ/K mol. The gas constant HEY!!! IT'S IN KILOJOULE
+		var F = 9.648534e-2; // in [kJ / mV mol]
+		var T = 298;         // in K
+		var Kobs = 1e5;      // For ATP. Standard. Or you could get other values from, e.g., {Rosing & Slater, 1972}
+		
+        // composite constants
+        var RT     = R*T;		// will be set later since temperature is specified by the user
+		var RT_F   = R*T/F;	// likewise
+		var RT23   = Math.LN10*R*T;	// likewise (2.3*RT for Delta G calculations in kJ/mol)
+		var RT23_F = Math.LN10*R*T/F;	// likewise (2.3*RT/F for pmf calculations in mV)
+		
+		// graphing constants
+		var G_HEIGHT = 600; // in pixels
+		var G_PROTOCELL_HEIGHT = 500;
+		
+		// DEFAULT VALUES
+		var DEF = new Array();
+		// pH and concentrations
+		DEF['pHo']			=  7;
+		DEF['pHv']			= 10;
+		DEF['C_Na_o_N']		=  4;	// {Mulkidjanian et al. 2012}
+		DEF['C_Na_o_E']		= -1;
+		DEF['C_K_o_N']		=  1;	// {Mulkidjanian et al. 2012}
+		DEF['C_K_o_E']		= -2;
+		// we want chlorine to be whatever number neutralises all other ions (Na+, K+, H+ and OH-)
+		var cl = DEF['C_Na_o_N']*Math.pow(10,DEF['C_Na_o_E'])+DEF['C_K_o_N']*Math.pow(10,DEF['C_K_o_E']);
+		DEF['C_Cl_o_N']		=  cl*Math.pow(10,-Math.floor(log10(cl)));	// {Mulkidjanian et al. 2012}
+		
+        DEF['C_Cl_o_E']		= -Math.floor(log10(cl));
+		DEF['C_H2_v_N']		=  1.5;	// {ignoring: Schmidt et al. in Logatchev vent, 2007}
+		DEF['C_H2_v_E']		= -2;
+		
+		// membrane permeabilities
+		DEF['prmH_N']		=  1;	// {Deamer and Bramhall 1986}
+		DEF['prmH_E']		= -3;
+		DEF['prmOH_N']		=  1;	// {Deamer and Bramhall 1986}
+		DEF['prmOH_E']		= -3;
+		DEF['prmNa_N']		=  1;	// {Deamer and Bramhall 1986}
+		DEF['prmNa_E']		= -9;
+		DEF['prmK_N']		=  1;	// {Deamer & Dworkin, 2005}
+		DEF['prmK_E']		= -9;
+		DEF['prmCl_N']		=  1;	// {Toyoshima & Thompson, 1975}
+		DEF['prmCl_E']		= -7;	// {Albert says it's 2 orders higher than Na/K}
+		
+		// ATPase
+		DEF['HperATP']		=  3.33;	// 
+		DEF['Pct_ATPase_N']	=  1.0; 	//3.5;	// {Etzold et al. 1997}
+		DEF['Pct_ATPase_E']	=  0;	//0 {Etzold et al. 1997}
+		DEF['A_Fo_N']		=  4;	// Rough estimate of the area of ATPase, from {PDB:1c17; Yoshida et al. 2001}
+		DEF['A_Fo_E']		=-17;	// 
+		DEF['ATPturnover_N']=  2.7;	// 2.7 {Etzold et al. 1997}. This is the maximum number of ATP molecules synthesised per second
+		DEF['ATPturnover_E']=  1; 	// 2 10% of {Etzold et al. 1997}
+		DEF['ATPase_sat']	=-20;	// we assume the ATPase operates at its maximum power (the turnover number) slightly above this value
+		DEF['doATPase_v']	= false; // let ATPase on the vent side operate
+		
+		// Ech
+		DEF['HperEch']		=  2;	// Cannot be larger than that according to {Hedderich & Forzi, 2005}
+		DEF['Pct_Ech_N']	=  0.0; // what's the percentage of Ech on the membrane? What was it back then?
+		DEF['Pct_Ech_E']	=  0;	// 
+		DEF['A_Ech_N']		=  3;	// Rough estimate from {PDB:4HEA; Baradaran et al. 2013}, taking into account the appropriate subunits from {Marreiros et al., 2013}
+		DEF['A_Ech_E']		=-17;	// 
+		DEF['EchTurnover_N']=  7;	// 7 {Liebgott et al., 2010. Fig. 4a}. This is the maximum number of reactions of Ech per second
+		DEF['EchTurnover_E']=  1; 	// 2: 10% of {Liebgott et al., 2010}
+		DEF['Ech_sat']		= DEF['ATPase_sat']; // we assume the Ech operates at its maximum power (the turnover number) near the same saturation value of the ATPase
+		
+		// SPAP
+		DEF['HperNa']		=  1;	// although some archaea have a 2:1 SPAP {Thauer et al. 2008}, we're using as an example the E.coli NhaA, which has a 1:1 Na/H exchange ratio
+		DEF['Pct_SPAP_N']	=  0;	// What is the percentage of SPAP in the membrane? What was it back then?
+		DEF['Pct_SPAP_E']	=  0;	// Our model is first-principles, so the exact numbers don't really matter
+		DEF['A_SPAP_N']		=  1.5;	// Rough estimate from {PDB:1ZCD; Hunte et al. 2005}
+		DEF['A_SPAP_E']		=-17;
+		DEF['SPAPturnover_N']= 1.5;	// 1.5{Hunte et al. 2005}
+		DEF['SPAPturnover_E']= 2; // 3: 10% of {Hunte et al. 2005}
+		DEF['SPAPdissip']	=  1;
+		DEF['SPAP_v']		=  false; // we don't want to SPAP towards the vent, that would be a waste, but you can try it!
+		
+		// pump
+		DEF['HvsNa']		=  0;	// 0: pump only H, 1: pump only Na, and anything in between
+		DEF['Pct_pump_N']	=  0;	// How much pump was there back then?
+		DEF['Pct_pump_E']	=  0;	// Our model is first-principles, so the exact numbers don't really matter
+		DEF['A_pump_N']		=  3;	// Assumed similar to the Ech
+		DEF['A_pump_E']		=-17;
+		DEF['pumpTurnover_N']= 2;	// {Vinogradov, 1998 for complex I}
+		DEF['pumpTurnover_E']= 1;	// 2: 10% of {Vinogradov, 1998 for complex I}
+		DEF['pump_H2_sat']	=  0.008; // at this concentration of H2 the pump operates nearly (98%) at its maximum (turnover) 
+		DEF['pump_grad_sat']=  6; // when there's a gradient of this size standing against, the pump essentially doesn't work at all
+		DEF['pump_v']		= true;	// pump towards the vent?
+		DEF['pumpVsGrad']	= true;	// respond to the gradient? i.e., easier to pump towards alkaline, harder towards acidic
+		
+		// General stuff
+		DEF['T']			= 298.15; // T=25ºC (standard)
+		DEF['d_N']			=  1;	// diameter of the protocell = small diameter of E.coli = 1um
+		DEF['d_E']			= -6;
+		DEF['ventPct']		= 50;	// the protocell is half-embedded in the vent, the other half facing the ocean
+		DEF['doDeltaGPlot']	= false; // plot total delta G (H+ plus Na+)
+		DEF['tStep']		= -3;	// how big is every time step (10^x)
+		DEF['skip']			= 1e6;	// how many results do we want to skip from output tables
+		
+		// all the relevant variables for output
+		var varsArray = ["t"
+					,"pH","C_Na","C_Cl","C_K"
+					,"DeltaPsi_o","DeltaPsi_v"
+                    //,"Delta_pH_o","Delta_pNa_o"
+					,"DeltaG_o","DeltaG_v"
+                    //,"DeltaG_H_o","DeltaG_Na_o"
+                    //,"DeltaG_H_v","DeltaG_Na_v"
+                    //,"pmf_o","pmf_v","C_H","C_OH","HperATPase"
+					//,"N_H_in_o","N_H_in_v","N_OH_in_o","N_OH_in_v"
+                    //,"N_Na_in_o","N_Na_in_v"
+					//,"N_K_in_o","N_K_in_v","N_Cl_in_o","N_Cl_in_v"
+					//,"N_ATP_H_s_o","N_ATP_Na_s_o"
+                    //,"N_ATP_H_s_v","N_ATP_Na_s_v"
+					//,"N_H_in_ATPase","N_Na_in_ATPase"
+                    //,"N_H_in_Ech","N_Na_in_Ech"
+					//,"N_H_in_SPAP_o","N_H_in_SPAP_v"
+                    //,"N_Na_in_SPAP_o","N_Na_in_SPAP_v"
+                    //,"N_H_in_pump_o","N_H_in_pump_v"
+                    //,"N_Na_in_pump_o","N_Na_in_pump_v"
+					];
+					
+		Pct_ATPase = Pct_SPAP = Pct_pump = Pct_Ech = 0;
+        
+        ////////////////////////////
+		// MATHEMATICAL FUNCTIONS //
+		////////////////////////////
+		function log10(n) { return Math.log(n) / Math.LN10; }
+		function sign(n) { return (n > 0) - (n < 0); }
+		function sinh(angle) // in radians
+		{
+			var p=Math.pow(Math.E,angle);
+			return (p*1-1/p)/2;
+		}
+		function cosh(angle) // in radians
+		{
+			var p=Math.pow(Math.E,angle);
+			return (p*1+1/p)/2;
+		}
+		function tanh(angle) // in radians
+		{
+			return sinh(angle)/cosh(angle);
+		}
+		function sigmoid(x, sat)
+		{
+			// DESC: returns a sigmoid value between -1 and 1 for value, where the curve is almost saturated (98.2%) at sat
+			return tanh(x*2/sat);
+		}
+		function posSigmoid(x,sat,centre)
+		{
+			// DESC: returns a sigmoid value between 0 and 1 for x, where the curve is almost saturated (98.2%) at sat
+			// and the curve is centred at centre
+			return (tanh((x-centre)*2/(sat-centre))+1)/2;
+		}
+		function doubleSigmoid(x, sat)
+		{
+			// curve is at 95% capacity when x=sat
+			return sign(x)*(1-Math.exp(-3*Math.pow(x/sat,2))); // 3: 95%
+			//return sign(x)*(tanh(2*(-sign(x)*x-sat)/sat)+1)/2*tanh(Math.abs(x/sat));
+		}
+		function sigFigs(n,sigs)
+		{
+			// DESC: returns a number with UP TO "sigs" significant figures
+			// or fewer if the original number "n" has fewer
+			if (n==0) return 0;
+			var sign = 1;
+			if (n<0) {n=-n; sign=-1;}
+			var mult = Math.pow(10, sigs - Math.floor(Math.log(n) / Math.LN10) - 1);
+			return sign*Math.round(n*mult)/mult;
+		}
+		
+		function setifdef(elid, value)
+		{
+			if (!value) value="0";
+			$("#"+elid).html(value);
+			if ((elid.substring(0,3)=="prm") || (elid.substring(0,5) == "G_prm")) { $("#"+elid).html((M_TO_CM*value).toExponential(1)); }
+		}
+		
+		function updateVar(varName,value)
+		{
+			// update the variable itself
+			eval(varName + " = " + value + ";");
+			// update the display on the parameters panel
+			setifdef(varName+"_val",value);
+			// update the variable's display in the visualisation panel
+			setifdef("G_"+varName,value);
+		}
+		
+		//////////////////////////////////////////
+		//  jQueryUI PARAMETERS INITIALISATION  //
+		//////////////////////////////////////////
+		$(function() {
+			function initialise()
+			{
+				///////////////////////////
+				// pH and concentrations //
+				///////////////////////////
+				pHo=$("#pHo_slider").slider("value");
+                updateVar("pHo",pHo);
+                C_H_o = Math.pow(10,-pHo);
+				C_OH_o = Math.pow(10,pHo-14);
+				
+                pHv=$("#pHv_slider").slider("value");
+                updateVar("pHv",pHv);
+                C_H_v = Math.pow(10,-pHv);
+				C_OH_v = Math.pow(10,pHv-14);
+				
+				$("#C_Na_o_N_spinner").spinner("value", DEF['C_Na_o_N']);
+				$("#C_Na_o_E_spinner").spinner("value", DEF['C_Na_o_E']);
+				C_Na_o = $("#C_Na_o_N_spinner").spinner("value") * Math.pow(10,$("#C_Na_o_E_spinner").spinner("value"));
+				updateVar("C_Na_o",C_Na_o);
+				
+				$("#C_K_o_N_spinner").spinner("value", DEF['C_K_o_N']);
+				$("#C_K_o_E_spinner").spinner("value", DEF['C_K_o_E']);
+				C_K_o = $("#C_K_o_N_spinner").spinner("value") * Math.pow(10,$("#C_K_o_E_spinner").spinner("value"));
+				updateVar("C_K_o",C_K_o);
+				
+				$("#C_Cl_o_N_spinner").spinner("value", DEF['C_Cl_o_N']);
+				$("#C_Cl_o_E_spinner").spinner("value", DEF['C_Cl_o_E']);
+				C_Cl_o = $("#C_Cl_o_N_spinner").spinner("value") * Math.pow(10,$("#C_Cl_o_E_spinner").spinner("value"));
+				updateVar("C_Cl_o",C_Cl_o);
+				
+				$("#C_H2_v_N_spinner").spinner("value", DEF['C_H2_v_N']);
+				$("#C_H2_v_E_spinner").spinner("value", DEF['C_H2_v_E']);
+				C_H2_v = $("#C_H2_v_N_spinner").spinner("value") * Math.pow(10,$("#C_H2_v_E_spinner").spinner("value"));
+				updateVar("C_H2_v",C_H2_v);
+				
+				
+				/////////////////////////////
+				// Membrane permeabilities //
+				/////////////////////////////
+				$("#prmH_N_spinner").spinner("value", DEF['prmH_N']);
+				$("#prmH_E_spinner").spinner("value", DEF['prmH_E']);
+				prmH = $("#prmH_N_spinner").spinner("value") * Math.pow(10,$("#prmH_E_spinner").spinner("value"))/M_TO_CM;
+				updateVar("prmH",prmH);
+				
+				$("#prmOH_N_spinner").spinner("value", DEF['prmOH_N']);
+				$("#prmOH_E_spinner").spinner("value", DEF['prmOH_E']);
+				prmOH = $("#prmOH_N_spinner").spinner("value") * Math.pow(10,$("#prmOH_E_spinner").spinner("value"))/M_TO_CM;
+				updateVar("prmOH",prmOH);
+				
+				$("#prmNa_N_spinner").spinner("value", DEF['prmNa_N']);
+				$("#prmNa_E_spinner").spinner("value", DEF['prmNa_E']);
+				prmNa = $("#prmNa_N_spinner").spinner("value") * Math.pow(10,$("#prmNa_E_spinner").spinner("value"))/M_TO_CM;
+				updateVar("prmNa",prmNa);
+				
+				$("#prmK_N_spinner").spinner("value", DEF['prmK_N']);
+				$("#prmK_E_spinner").spinner("value", DEF['prmK_E']);
+				prmK = $("#prmK_N_spinner").spinner("value") * Math.pow(10,$("#prmK_E_spinner").spinner("value"))/M_TO_CM;
+				updateVar("prmK",prmK);
+				
+				$("#prmCl_N_spinner").spinner("value", DEF['prmCl_N']);
+				$("#prmCl_E_spinner").spinner("value", DEF['prmCl_E']);
+				prmCl = $("#prmCl_N_spinner").spinner("value") * Math.pow(10,$("#prmCl_E_spinner").spinner("value"))/M_TO_CM;
+				updateVar("prmCl",prmCl);
+				
+				
+				////////////
+				// ATPase //
+				////////////
+				HperATP=$("#HperATP_slider").slider("value");
+				updateVar("HperATP",HperATP);
+				
+				$("#Pct_ATPase_N_spinner").spinner("value", DEF['Pct_ATPase_N']);
+				$("#Pct_ATPase_E_spinner").spinner("value", DEF['Pct_ATPase_E']);
+				Pct_ATPase = $("#Pct_ATPase_N_spinner").spinner("value") * Math.pow(10,$("#Pct_ATPase_E_spinner").spinner("value"));
+				updateVar("Pct_ATPase",Pct_ATPase);
+				
+				$("#A_Fo_N_spinner").spinner("value", DEF['A_Fo_N']);
+				$("#A_Fo_E_spinner").spinner("value", DEF['A_Fo_E']);
+				A_Fo = $("#A_Fo_N_spinner").spinner("value") * Math.pow(10,$("#A_Fo_E_spinner").spinner("value"));
+				updateVar("A_Fo",A_Fo);
+				
+				$("#ATPturnover_N_spinner").spinner("value", DEF['ATPturnover_N']);
+				$("#ATPturnover_E_spinner").spinner("value", DEF['ATPturnover_E']);
+				ATPturnover = $("#ATPturnover_N_spinner").spinner("value") * Math.pow(10,$("#ATPturnover_E_spinner").spinner("value"));
+				updateVar("ATPturnover",ATPturnover);
+				
+				$("#ATPase_sat_spinner").spinner("value", DEF['ATPase_sat']);
+				ATPase_sat = $("#ATPase_sat_spinner").spinner("value");
+				updateVar("ATPase_sat",ATPase_sat);
+				updateVar("Ech_sat",ATPase_sat);
+				
+				
+				///////////
+				//  Ech  //
+				///////////
+				HperEch=$("#HperEch_slider").slider("value");
+				updateVar("HperEch",HperEch);
+				
+				$("#Pct_Ech_N_spinner").spinner("value", DEF['Pct_Ech_N']);
+				$("#Pct_Ech_E_spinner").spinner("value", DEF['Pct_Ech_E']);
+				Pct_Ech = $("#Pct_Ech_N_spinner").spinner("value") * Math.pow(10,$("#Pct_Ech_E_spinner").spinner("value"));
+				updateVar("Pct_Ech",Pct_Ech);
+				
+				$("#A_Ech_N_spinner").spinner("value", DEF['A_Ech_N']);
+				$("#A_Ech_E_spinner").spinner("value", DEF['A_Ech_E']);
+				A_Ech = $("#A_Ech_N_spinner").spinner("value") * Math.pow(10,$("#A_Ech_E_spinner").spinner("value"));
+				updateVar("A_Ech",A_Ech);
+				
+				$("#EchTurnover_N_spinner").spinner("value", DEF['EchTurnover_N']);
+				$("#EchTurnover_E_spinner").spinner("value", DEF['EchTurnover_E']);
+				EchTurnover = $("#EchTurnover_N_spinner").spinner("value") * Math.pow(10,$("#EchTurnover_E_spinner").spinner("value"));
+				updateVar("EchTurnover",EchTurnover);
+				
+				
+				//////////
+				// SPAP //
+				//////////
+				HperNa=$("#HperNa_slider").slider("value");
+				updateVar("HperNa",HperNa);
+				
+				$("#Pct_SPAP_N_spinner").spinner("value", DEF['Pct_SPAP_N']);
+				$("#Pct_SPAP_E_spinner").spinner("value", DEF['Pct_SPAP_E']);
+				Pct_SPAP = $("#Pct_SPAP_N_spinner").spinner("value") * Math.pow(10,$("#Pct_SPAP_E_spinner").spinner("value"));
+				updateVar("Pct_SPAP",Pct_SPAP);
+				
+				$("#A_SPAP_N_spinner").spinner("value", DEF['A_SPAP_N']);
+				$("#A_SPAP_E_spinner").spinner("value", DEF['A_SPAP_E']);
+				A_SPAP = $("#A_SPAP_N_spinner").spinner("value") * Math.pow(10,$("#A_SPAP_E_spinner").spinner("value"));
+				updateVar("A_SPAP",A_SPAP);
+				
+				$("#SPAPturnover_N_spinner").spinner("value", DEF['SPAPturnover_N']);
+				$("#SPAPturnover_E_spinner").spinner("value", DEF['SPAPturnover_E']);
+				SPAPturnover = $("#SPAPturnover_N_spinner").spinner("value") * Math.pow(10,$("#SPAPturnover_E_spinner").spinner("value"));
+				updateVar("SPAPturnover",SPAPturnover);
+				
+				SPAPdissip=$("#SPAPdissip_slider").slider("value");
+				updateVar("SPAPdissip",SPAPdissip);
+				
+				// do we want the SPAP to operate towards the vent?
+				SPAP_v = DEF['SPAP_v'];
+				$('#SPAP_v').attr('checked',SPAP_v);
+				
+				//////////
+				// PUMP //
+				//////////
+				HvsNa=$("#HvsNa_slider").slider("value");
+				updateVar("HvsNa",HvsNa);
+				
+				$("#Pct_pump_N_spinner").spinner("value", DEF['Pct_pump_N']);
+				$("#Pct_pump_E_spinner").spinner("value", DEF['Pct_pump_E']);
+				Pct_pump = $("#Pct_pump_N_spinner").spinner("value") * Math.pow(10,$("#Pct_pump_E_spinner").spinner("value"));
+				updateVar("Pct_pump",Pct_pump);
+				
+				$("#A_pump_N_spinner").spinner("value", DEF['A_pump_N']);
+				$("#A_pump_E_spinner").spinner("value", DEF['A_pump_E']);
+				A_pump = $("#A_pump_N_spinner").spinner("value") * Math.pow(10,$("#A_pump_E_spinner").spinner("value"));
+				updateVar("A_pump",A_pump);
+				
+				$("#pumpTurnover_N_spinner").spinner("value", DEF['pumpTurnover_N']);
+				$("#pumpTurnover_E_spinner").spinner("value", DEF['pumpTurnover_E']);
+				pumpTurnover = $("#pumpTurnover_N_spinner").spinner("value") * Math.pow(10,$("#pumpTurnover_E_spinner").spinner("value"));
+				updateVar("pumpTurnover",pumpTurnover);
+				
+				// This [H2] is enough to saturate the pump (bring it to its max power, the turnover number)
+				$("#pump_H2_sat_spinner").spinner("value", DEF['pump_H2_sat']);
+				pump_H2_sat = $("#pump_H2_sat_spinner").spinner("value");
+				updateVar("pump_H2_sat",pump_H2_sat);
+				
+				// when there's an opposing gradient this big, the pump almost does not work at all
+				$("#pump_grad_sat_spinner").spinner("value", DEF['pump_grad_sat']);
+				pump_grad_sat = $("#pump_grad_sat_spinner").spinner("value");
+				updateVar("pump_grad_sat",pump_grad_sat);
+				
+				// do we want the PUMP to operate towards the vent?
+				pump_v = DEF['pump_v'];
+				$('#pump_v').attr('checked',pump_v);
+				
+				// does the pump's power depend on the gradient?
+				pumpVsGrad = DEF['pumpVsGrad'];
+				$('#pumpVsGrad').attr('checked',pumpVsGrad);
+				
+				
+				///////////////////
+				// General stuff //
+				///////////////////
+				$("#d_N_spinner").spinner("value", DEF['d_N']);
+				$("#d_E_spinner").spinner("value", DEF['d_E']);
+				d = $("#d_N_spinner").spinner("value") * Math.pow(10,$("#d_E_spinner").spinner("value"));
+				updateVar("d",d);
+				
+				ventPct=$("#ventPct_slider").slider("value");
+				updateVar("ventPct",ventPct);
+				// change height of vent graph
+				document.getElementById("G_Rock").style.height = (G_PROTOCELL_HEIGHT*ventPct/100 + (G_HEIGHT-G_PROTOCELL_HEIGHT)/2) +"px";
+				
+				$("#tStep_spinner").spinner("value", DEF['tStep']);
+				tStep = Math.pow(10,$("#tStep_spinner").spinner("value"));
+				updateVar("tStep",tStep);
+				
+				$("#T_spinner").spinner("value", DEF['T']);
+				T = $("#T_spinner").spinner("value");
+				//updateVar("T",T);
+				
+				// do we want to plot?
+				doDeltaGPlot = DEF['doDeltaGPlot'];
+				$('#doDeltaGPlot').attr('checked',doDeltaGPlot);
+				
+                // do we want ATPase to operate on the vent side?
+				doATPase_v = DEF['doATPase_v'];
+				$('#doATPase_v').attr('checked',doATPase_v);
+                
+				// how many results do we want to skip from output tables
+				skip = DEF['skip'];
+				$('#skipper').val(DEF['skip']);
+			}
+			
+			// ACCORDION
+			$( "#parameters" ).accordion(
+				{
+					collapsible: true
+					,active: false
+					,fillSpace: false
+					,heightStyle: "content"
+				}
+			);
+			
+			// BUTTONS
+			$( "input[type=submit], button" )
+				.button()
+				.click(function( event ) { event.preventDefault(); });
+			
+			/////////////////////////////
+			//  pH and concentrations  //
+			/////////////////////////////
+			
+			// pHo - OCEAN pH - slider
+			$( "#pHo_slider" ).slider({
+				range: "max",
+				min: 0.0,
+				max: 14.0,
+				value: DEF['pHo'],
+				step: 0.1,
+				slide: function(event,ui) { updateVar("pHo",ui.value); C_H_o = Math.pow(10,-pHo); C_OH_o = Math.pow(10,pHo-14); },
+			});
+			
+			// pHv - VENT pH - slider
+			$( "#pHv_slider" ).slider({
+				range: "max",
+				min: 0,
+				max: 14,
+				value: DEF['pHv'],
+				step: 0.1,
+				slide: function(event,ui) { updateVar("pHv",ui.value); C_H_v = Math.pow(10,-pHv); C_OH_v = Math.pow(10,pHv-14); },
+			});
+			
+			// C_Na_o - Concentration of sodium in the ocean - Two spinners
+			// the mantissa
+			$( "#C_Na_o_N_spinner" ).spinner({
+				step: 0.1,
+				min: 1.0,
+				max: 9.9,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("C_Na_o",ui.value*Math.pow(10, $("#C_Na_o_E_spinner").spinner("value"))); },
+				change: function() { updateVar("C_Na_o",this.value*Math.pow(10, $("#C_Na_o_E_spinner").spinner("value"))); },
+			});
+			// the order of magnitude (x10^?)
+			$( "#C_Na_o_E_spinner" ).spinner({
+				step: 1,
+				min: -12,
+				max: -1,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("C_Na_o",$("#C_Na_o_N_spinner").spinner("value")*Math.pow(10,ui.value)); },
+				change: function() { updateVar("C_Na_o",$("#C_Na_o_N_spinner").spinner("value")*Math.pow(10,this.value)); },
+			});
+			
+			// C_K_o - Concentration of potassium in the ocean - Two spinners
+			// the mantissa
+			$( "#C_K_o_N_spinner" ).spinner({
+				step: 0.1,
+				min: 1.0,
+				max: 9.9,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("C_K_o",ui.value*Math.pow(10, $("#C_K_o_E_spinner").spinner("value"))); },
+				change: function() { updateVar("C_K_o",this.value*Math.pow(10, $("#C_K_o_E_spinner").spinner("value"))); },
+			});
+			// the order of magnitude (x10^?)
+			$( "#C_K_o_E_spinner" ).spinner({
+				step: 1,
+				min: -12,
+				max: -1,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("C_K_o",$("#C_K_o_N_spinner").spinner("value")*Math.pow(10,ui.value)); },
+				change: function() { updateVar("C_K_o",$("#C_K_o_N_spinner").spinner("value")*Math.pow(10,this.value)); },
+			});
+			
+			// C_Cl_o - Concentration of chlorine in the ocean - Two spinners
+			// the mantissa
+			$( "#C_Cl_o_N_spinner" ).spinner({
+				step: 0.1,
+				min: 1.0,
+				max: 9.9,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("C_Cl_o",ui.value*Math.pow(10, $("#C_Cl_o_E_spinner").spinner("value"))); },
+				change: function() { updateVar("C_Cl_o",this.value*Math.pow(10, $("#C_Cl_o_E_spinner").spinner("value"))); },
+			});
+			// the order of magnitude (x10^?)
+			$( "#C_Cl_o_E_spinner" ).spinner({
+				step: 1,
+				min: -12,
+				max: -1,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("C_Cl_o",$("#C_Cl_o_N_spinner").spinner("value")*Math.pow(10,ui.value)); },
+				change: function() { updateVar("C_Cl_o",$("#C_Cl_o_N_spinner").spinner("value")*Math.pow(10,this.value)); },
+			});
+			
+			// C_H2_v - Concentration of hydrogen disolved in the vent - Two spinners
+			// the mantissa
+			$( "#C_H2_v_N_spinner" ).spinner({
+				step: 0.1,
+				min: 1.0,
+				max: 9.9,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("C_H2_v",ui.value*Math.pow(10, $("#C_H2_v_E_spinner").spinner("value"))); },
+				change: function() { updateVar("C_H2_v",this.value*Math.pow(10, $("#C_H2_v_E_spinner").spinner("value"))); },
+			});
+			// the order of magnitude (x10^?)
+			$( "#C_H2_v_E_spinner" ).spinner({
+				step: 1,
+				min: -4,
+				max: -1,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("C_H2_v",$("#C_H2_v_N_spinner").spinner("value")*Math.pow(10,ui.value)); },
+				change: function() { updateVar("C_H2_v",$("#C_H2_v_N_spinner").spinner("value")*Math.pow(10,this.value)); },
+			});
+			
+			
+			//////////////////////////
+			//		PERMEABILITY	//
+			//////////////////////////
+			// prmH - Membrane permeabtility to H+ - spinner
+			// the mantissa
+			$( "#prmH_N_spinner" ).spinner({
+				step: 0.1,
+				min: 1.0,
+				max: 9.9,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("prmH",ui.value*Math.pow(10, $("#prmH_E_spinner").spinner("value"))/M_TO_CM); },
+				change: function() { updateVar("prmH",this.value*Math.pow(10, $("#prmH_E_spinner").spinner("value"))/M_TO_CM); },
+			});
+			// the order of magnitude (x10^?)
+			$( "#prmH_E_spinner" ).spinner({
+				step: 1,
+				min: -16,
+				max: -1,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("prmH",$("#prmH_N_spinner").spinner("value")*Math.pow(10,ui.value)/M_TO_CM); },
+				change: function() { updateVar("prmH",$("#prmH_N_spinner").spinner("value")*Math.pow(10,this.value)/M_TO_CM); },
+			});
+			
+			// prmOH - Membrane permeabtility to OH- - spinner
+			// the mantissa
+			$( "#prmOH_N_spinner" ).spinner({
+				step: 0.1,
+				min: 1.0,
+				max: 9.9,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("prmOH",ui.value*Math.pow(10, $("#prmOH_E_spinner").spinner("value"))/M_TO_CM); },
+				spin: function() { updateVar("prmOH",this.value*Math.pow(10, $("#prmOH_E_spinner").spinner("value"))/M_TO_CM); },
+			});
+			// the order of magnitude (x10^?)
+			$( "#prmOH_E_spinner" ).spinner({
+				step: 1,
+				min: -14,
+				max: -1,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("prmOH",$("#prmOH_N_spinner").spinner("value")*Math.pow(10,ui.value)/M_TO_CM); },
+				change: function() { updateVar("prmOH",$("#prmOH_N_spinner").spinner("value")*Math.pow(10,this.value)/M_TO_CM); },
+			});
+			
+			// prmNa - Membrane permeabtility to Na+ - spinner
+			// the mantissa
+			$( "#prmNa_N_spinner" ).spinner({
+				step: 0.1,
+				min: 1.0,
+				max: 9.9,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("prmNa",ui.value*Math.pow(10, $("#prmNa_E_spinner").spinner("value"))/M_TO_CM); },
+				change: function() { updateVar("prmNa",this.value*Math.pow(10, $("#prmNa_E_spinner").spinner("value"))/M_TO_CM); },
+			});
+			// the order of magnitude (x10^?)
+			$( "#prmNa_E_spinner" ).spinner({
+				step: 1,
+				min: -16,
+				max: -3,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("prmNa",$("#prmNa_N_spinner").spinner("value")*Math.pow(10,ui.value)/M_TO_CM); },
+				change: function() { updateVar("prmNa",$("#prmNa_N_spinner").spinner("value")*Math.pow(10,this.value)/M_TO_CM); },
+			});
+			
+			// prmK - Membrane permeabtility to K+ - spinner
+			// the mantissa
+			$( "#prmK_N_spinner" ).spinner({
+				step: 0.1,
+				min: 1.0,
+				max: 9.9,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("prmK",ui.value*Math.pow(10, $("#prmK_E_spinner").spinner("value"))/M_TO_CM); },
+				change: function() { updateVar("prmK",this.value*Math.pow(10, $("#prmK_E_spinner").spinner("value"))/M_TO_CM); },
+			});
+			// the order of magnitude (x10^?)
+			$( "#prmK_E_spinner" ).spinner({
+				step: 1,
+				min: -16,
+				max: -3,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("prmK",$("#prmK_N_spinner").spinner("value")*Math.pow(10,ui.value)/M_TO_CM); },
+				change: function() { updateVar("prmK",$("#prmK_N_spinner").spinner("value")*Math.pow(10,this.value)/M_TO_CM); },
+			});
+			
+			// prmCl | Membrane permeabtility to Cl- | two spinners
+			// the mantissa
+			$( "#prmCl_N_spinner" ).spinner({
+				step: 0.1,
+				min: 1.0,
+				max: 9.9,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("prmCl",ui.value*Math.pow(10, $("#prmCl_E_spinner").spinner("value"))/M_TO_CM); },
+				change: function() { updateVar("prmCl",this.value*Math.pow(10, $("#prmCl_E_spinner").spinner("value"))/M_TO_CM); },
+			});
+			// the order of magnitude (x10^?)
+			$( "#prmCl_E_spinner" ).spinner({
+				step: 1,
+				min: -16,
+				max: -3,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("prmCl",$("#prmCl_N_spinner").spinner("value")*Math.pow(10,ui.value)/M_TO_CM); },
+				change: function() { updateVar("prmCl",$("#prmCl_N_spinner").spinner("value")*Math.pow(10,this.value)/M_TO_CM); },
+			});
+			
+			
+			/////////////////////////////
+			//  ATPase - ATP synthase  //
+			/////////////////////////////
+			// HperATP | number of protons per ATP synthesised | slider
+			$( "#HperATP_slider" ).slider({
+				range: "max",
+				min: 1.94,
+				max: 6,
+				value: DEF['HperATP'],
+				step: 0.01,
+				slide: function(event,ui) { updateVar("HperATP",ui.value); }
+			});
+			
+			// Pct_ATPase | % of ATPase in membrane (both sides) | two spinners
+			// the mantissa
+			$( "#Pct_ATPase_N_spinner" ).spinner({
+				step: 0.1,
+				min: 0.0,
+				max: 9.9,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("Pct_ATPase",ui.value*Math.pow(10, $("#Pct_ATPase_E_spinner").spinner("value"))); set_Pct_nonLipid(); },
+				change: function() { updateVar("Pct_ATPase",this.value*Math.pow(10, $("#Pct_ATPase_E_spinner").spinner("value"))); set_Pct_nonLipid(); },
+			});
+			// the order of magnitude (x10^?)
+			$( "#Pct_ATPase_E_spinner" ).spinner({
+				step: 1,
+				min: -3,
+				max: 1,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("Pct_ATPase",$("#Pct_ATPase_N_spinner").spinner("value")*Math.pow(10,ui.value)); set_Pct_nonLipid(); },
+				change: function() { updateVar("Pct_ATPase",$("#Pct_ATPase_N_spinner").spinner("value")*Math.pow(10,this.value)); set_Pct_nonLipid(); },
+			});
+			
+			// A_Fo | Area of each ATPase Fo subunit | two spinners
+			// the mantissa
+			$( "#A_Fo_N_spinner" ).spinner({
+				step: 0.1,
+				min: 1.0,
+				max: 9.9,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("A_Fo",ui.value*Math.pow(10, $("#A_Fo_E_spinner").spinner("value"))); set_Pct_nonLipid(); }
+			});
+			// the order of magnitude (x10^?)
+			$( "#A_Fo_E_spinner" ).spinner({
+				step: 1,
+				min: -18,
+				max: -16,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("A_Fo",$("#A_Fo_N_spinner").spinner("value")*Math.pow(10,ui.value)); set_Pct_nonLipid(); }
+			});
+			
+			// ATPturnover - Max production of ATP by the ATP synthase
+			// the mantissa
+			$( "#ATPturnover_N_spinner" ).spinner({
+				step: 0.1,
+				min: 1.0,
+				max: 9.9,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("ATPturnover",ui.value*Math.pow(10, $("#ATPturnover_E_spinner").spinner("value"))); }
+			});
+			// the order of magnitude (x10^?)
+			$( "#ATPturnover_E_spinner" ).spinner({
+				step: 1,
+				min: 0,
+				max: 2,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("ATPturnover",$("#ATPturnover_N_spinner").spinner("value")*Math.pow(10,ui.value)); }
+			});
+			
+			// ATPase_sat | Delta G at which ATPase saturates | spinner
+			$( "#ATPase_sat_spinner" ).spinner({
+				step: 1,
+				min: -90,
+				max: -10,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("ATPase_sat",ui.value); }
+			});
+			
+			/////////////////////////////////////////
+			// Ech - Energy-converting hydrogenase //
+			/////////////////////////////////////////
+			// HperEch | number of protons per Ech turn | slider
+			$( "#HperEch_slider" ).slider({
+				range: "max",
+				min: 1,
+				max: 2,
+				value: DEF['HperEch'],
+				step: 0.01,
+				slide: function(event,ui) { updateVar("HperEch",ui.value); }
+			});
+			
+			// Pct_Ech | % of Ech in membrane (both sides) | two spinners
+			// the mantissa
+			$( "#Pct_Ech_N_spinner" ).spinner({
+				step: 0.1,
+				min: 0.0,
+				max: 9.9,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("Pct_Ech",ui.value*Math.pow(10, $("#Pct_Ech_E_spinner").spinner("value"))); set_Pct_nonLipid(); },
+				change: function() { updateVar("Pct_Ech",this.value*Math.pow(10, $("#Pct_Ech_E_spinner").spinner("value"))); set_Pct_nonLipid(); },
+			});
+			// the order of magnitude (x10^?)
+			$( "#Pct_Ech_E_spinner" ).spinner({
+				step: 1,
+				min: -3,
+				max: 1,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("Pct_Ech",$("#Pct_Ech_N_spinner").spinner("value")*Math.pow(10,ui.value)); set_Pct_nonLipid(); },
+				change: function() { updateVar("Pct_Ech",$("#Pct_Ech_N_spinner").spinner("value")*Math.pow(10,this.value)); set_Pct_nonLipid(); },
+			});
+			
+			// A_Ech | Area of each ATPase Fo subunit | two spinners
+			// the mantissa
+			$( "#A_Ech_N_spinner" ).spinner({
+				step: 0.1,
+				min: 1.0,
+				max: 9.9,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("A_Ech",ui.value*Math.pow(10, $("#A_Ech_E_spinner").spinner("value"))); set_Pct_nonLipid(); }
+			});
+			// the order of magnitude (x10^?)
+			$( "#A_Ech_E_spinner" ).spinner({
+				step: 1,
+				min: -18,
+				max: -16,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("A_Ech",$("#A_Ech_N_spinner").spinner("value")*Math.pow(10,ui.value)); set_Pct_nonLipid(); }
+			});
+			
+			// EchTurnover - Max rate of Ech reaction
+			// the mantissa
+			$( "#EchTurnover_N_spinner" ).spinner({
+				step: 0.1,
+				min: 1.0,
+				max: 9.9,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("EchTurnover",ui.value*Math.pow(10, $("#EchTurnover_E_spinner").spinner("value"))); }
+			});
+			// the order of magnitude (x10^?)
+			$( "#EchTurnover_E_spinner" ).spinner({
+				step: 1,
+				min: 0,
+				max: 2,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("EchTurnover",$("#EchTurnover_N_spinner").spinner("value")*Math.pow(10,ui.value)); }
+			});
+			
+			//////////////////////////////
+			// SPAP - Na+/H+ antiporter //
+			//////////////////////////////
+			// HperNa | number of protons per Na extruded | slider
+			$( "#HperNa_slider" ).slider({
+				range: "max",
+				min: 0.5,
+				max: 5,
+				value: DEF['HperNa'],
+				step: 0.1,
+				slide: function(event,ui) { updateVar("HperNa",ui.value); }
+			});
+			
+			// Pct_SPAP | % of SPAP in membrane (both sides) | two spinners
+			// the mantissa
+			$( "#Pct_SPAP_N_spinner" ).spinner({
+				step: 0.05,
+				min: 0.0,
+				max: 9.9,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("Pct_SPAP",ui.value*Math.pow(10, $("#Pct_SPAP_E_spinner").spinner("value"))); set_Pct_nonLipid(); },
+				change: function() { updateVar("Pct_SPAP",this.value*Math.pow(10, $("#Pct_SPAP_E_spinner").spinner("value"))); set_Pct_nonLipid(); },
+			});
+			// the order of magnitude (x10^?)
+			$( "#Pct_SPAP_E_spinner" ).spinner({
+				step: 1,
+				min: -3,
+				max: 1,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("Pct_SPAP",$("#Pct_SPAP_N_spinner").spinner("value")*Math.pow(10,ui.value)); set_Pct_nonLipid(); },
+				change: function() { updateVar("Pct_SPAP",$("#Pct_SPAP_N_spinner").spinner("value")*Math.pow(10,this.value)); set_Pct_nonLipid(); },
+			});
+			
+			// A_SPAP | Area of each SPAP | two spinners
+			// the mantissa
+			$( "#A_SPAP_N_spinner" ).spinner({
+				step: 0.1,
+				min: 1.0,
+				max: 9.9,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("A_SPAP",ui.value*Math.pow(10, $("#A_SPAP_E_spinner").spinner("value"))); set_Pct_nonLipid(); }
+			});
+			// the order of magnitude (x10^?)
+			$( "#A_SPAP_E_spinner" ).spinner({
+				step: 1,
+				min: -18,
+				max: -16,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("A_SPAP",$("#A_SPAP_N_spinner").spinner("value")*Math.pow(10,ui.value)); set_Pct_nonLipid(); }
+			});
+			
+			// SPAPturnover - Max intake of protons
+			// the mantissa
+			$( "#SPAPturnover_N_spinner" ).spinner({
+				step: 0.1,
+				min: 1.0,
+				max: 9.9,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("SPAPturnover",ui.value*Math.pow(10, $("#SPAPturnover_E_spinner").spinner("value"))); }
+			});
+			// the order of magnitude (x10^?)
+			$( "#SPAPturnover_E_spinner" ).spinner({
+				step: 1,
+				min: 0,
+				max: 3,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("SPAPturnover",$("#SPAPturnover_N_spinner").spinner("value")*Math.pow(10,ui.value)); }
+			});
+			
+			// SPAPdissip | dissipation factor of the SPAP | slider
+			$( "#SPAPdissip_slider" ).slider({
+				range: "max",
+				min: 0.1,
+				max: 1,
+				value: DEF['SPAPdissip'],
+				step: 0.1,
+				slide: function(event,ui) { updateVar("SPAPdissip",ui.value); }
+			});
+			
+			
+			//////////////////////////////
+			//   PUMP! - H+|Na+ pump    //
+			//////////////////////////////
+			// HvsNa | number of H|Na extruded | slider
+			$( "#HvsNa_slider" ).slider({
+				range: "max",
+				min: 0,
+				max: 1,
+				value: DEF['HvsNa'],
+				step: 0.01,
+				slide: function(event,ui) { updateVar("HvsNa",ui.value); }
+			});
+			
+			// Pct_pump | % of pump in membrane (both sides) | two spinners
+			// the mantissa
+			$( "#Pct_pump_N_spinner" ).spinner({
+				step: 0.1,
+				min: 0.0,
+				max: 9.9,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("Pct_pump",ui.value*Math.pow(10, $("#Pct_pump_E_spinner").spinner("value"))); set_Pct_nonLipid(); },
+				change: function() { updateVar("Pct_pump",this.value*Math.pow(10, $("#Pct_pump_E_spinner").spinner("value"))); set_Pct_nonLipid(); },
+			});
+			// the order of magnitude (x10^?)
+			$( "#Pct_pump_E_spinner" ).spinner({
+				step: 1,
+				min: -3,
+				max: 1,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("Pct_pump",$("#Pct_pump_N_spinner").spinner("value")*Math.pow(10,ui.value)); set_Pct_nonLipid(); },
+				change: function() { updateVar("Pct_pump",$("#Pct_pump_N_spinner").spinner("value")*Math.pow(10,this.value)); set_Pct_nonLipid(); },
+			});
+			
+			// A_pump | Area of each pump protein | two spinners
+			// the mantissa
+			$( "#A_pump_N_spinner" ).spinner({
+				step: 0.1,
+				min: 1.0,
+				max: 9.9,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("A_pump",ui.value*Math.pow(10, $("#A_pump_E_spinner").spinner("value"))); set_Pct_nonLipid(); }
+			});
+			// the order of magnitude (x10^?)
+			$( "#A_pump_E_spinner" ).spinner({
+				step: 1,
+				min: -18,
+				max: -16,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("A_pump",$("#A_pump_N_spinner").spinner("value")*Math.pow(10,ui.value)); set_Pct_nonLipid(); }
+			});
+			
+			// pumpTurnover - Max intake of protons
+			// the mantissa
+			$( "#pumpTurnover_N_spinner" ).spinner({
+				step: 0.1,
+				min: 1.0,
+				max: 9.9,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("pumpTurnover",ui.value*Math.pow(10, $("#pumpTurnover_E_spinner").spinner("value"))); }
+			});
+			// the order of magnitude (x10^?)
+			$( "#pumpTurnover_E_spinner" ).spinner({
+				step: 1,
+				min: 0,
+				max: 3,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("pumpTurnover",$("#pumpTurnover_N_spinner").spinner("value")*Math.pow(10,ui.value)); }
+			});
+			
+			// pump_H2_sat | [H2] at which the pump saturates | spinner
+			$( "#pump_H2_sat_spinner" ).spinner({
+				step: 0.0005,
+				min:  0.0005,
+				max:  0.0200,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("pump_H2_sat",ui.value); }
+			});
+			
+			// pump_grad_sat | when there's an opposing gradient this big, the pump almost does not work at all | spinner
+			$( "#pump_grad_sat_spinner" ).spinner({
+				step: 0.5,
+				min:  0,
+				max:  7,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("pump_grad_sat",ui.value); }
+			});
+			
+			
+			/////////////////////////////
+			//  BACKGROUND PARAMETERS  //
+			/////////////////////////////
+			
+			// d - protocell diameter - two spinners
+			// the mantissa
+			$( "#d_N_spinner" ).spinner({
+				step: 0.1,
+				min: 1.0,
+				max: 9.9,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("d",ui.value*Math.pow(10, $("#d_E_spinner").spinner("value"))); },
+				change: function() { updateVar("d",this.value*Math.pow(10, $("#d_E_spinner").spinner("value"))); }
+			});
+			// the order of magnitude (x10^?)
+			$( "#d_E_spinner" ).spinner({
+				step: 1,
+				min: -9,
+				max: -1,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("d",$("#d_N_spinner").spinner("value")*Math.pow(10,ui.value)); },
+				change: function() { updateVar("d",$("#d_N_spinner").spinner("value")*Math.pow(10,this.value)); },
+			});
+			
+			// ventPct - protocell diameter - slider
+			$( "#ventPct_slider" ).slider({
+				range: "max",
+				min: 0,
+				max: 100,
+				value: DEF['ventPct'],
+				step: 1,
+				slide: function(event,ui) {
+						updateVar("ventPct",ui.value);
+						// change height of vent graph
+						document.getElementById("G_Rock").style.height = (G_PROTOCELL_HEIGHT*ventPct/100 + (G_HEIGHT-G_PROTOCELL_HEIGHT)/2) +"px";
+					}
+			});
+			
+			// tStep | the time step (x10^?) | spinner
+			$( "#tStep_spinner" ).spinner({
+				step: 1,
+				min: -6,
+				max: 6,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("tStep",Math.pow(10,ui.value)); }
+			});
+			
+			// T | Temperature | spinner
+			$( "#T_spinner" ).spinner({
+				min: 200,
+				max: 400,
+				step: 0.01,
+				numberFormat: "n",
+				spin: function(event,ui) { updateVar("T",ui.value); },
+				change: function() { updateVar("T",this.value); },
+			});
+			
+			////////////////////////////////////////////////////
+			
+			initialise();
+			// make an empty sparkline to plot DeltaG. It will be filled in later
+			$("#spkln_DeltaG_o").sparkline([], {type: "line", width:SPK_WIDTH, height:SPK_HEIGHT});
+			
+		}); // END jQueryUI initialisations
+		
+		// VARIABLES
+		// define a singleton object for the protocell
+		function ProtoCell()
+		{
+			// METHODS
+			this.CFromN = function(N) { return N/(this.V*AVOG*M3_TO_L); };
+			this.NFromC = function(C) { return Math.round(C*M3_TO_L*this.V*AVOG); };
+			this.set_pH = function() { this.pH = -log10(this.C_H); };
+			this.set_pH_from_pOH = function() { this.pH = 14+log10(this.C_OH)};
+			
+			this.set_areas = function()
+			{
+				// DESC: calculates the areas of membrane on each side by subtracting the proteins 
+				this.A_o = this.A*(1-ventPct/100)*(1-Pct_nonLipid/100);
+				this.A_v = this.A*(ventPct/100)*(1-Pct_nonLipid/100);
+				// number of ATPase, SPAP, & pump units
+				this.N_ATPase_o = this.A*(1-ventPct/100)*(Pct_ATPase/100)/A_Fo;
+				this.N_ATPase_v = this.A*(ventPct/100)  *(Pct_ATPase/100)/A_Fo;
+				this.N_Ech_o 	= this.A*(1-ventPct/100)*(Pct_Ech/100)   /A_Ech;
+				this.N_Ech_v 	= this.A*(ventPct/100)  *(Pct_Ech/100)   /A_Ech;
+				this.N_SPAP_o 	= this.A*(1-ventPct/100)*(Pct_SPAP/100)  /A_SPAP;
+				this.N_SPAP_v	= this.A*(ventPct/100)  *(Pct_SPAP/100)  /A_SPAP;
+				this.N_pump_o 	= this.A*(1-ventPct/100)*(Pct_pump/100)  /A_pump;
+				this.N_pump_v 	= this.A*(ventPct/100)  *(Pct_pump/100)  /A_pump;
+			};
+			
+			this.updateGraphics = function()
+			{
+				// DESC: UPDATES GRAPHICS!
+				if (doDeltaGPlot) { Arr_DeltaG_o.push(this.DeltaG_o); }
+				if (updateGraphs)
+				{
+					setifdef("G_N_OH",this.N_OH);
+					setifdef("G_N_H",this.N_H);
+					setifdef("G_N_Na",this.N_Na);
+					setifdef("G_N_K",this.N_K);
+					setifdef("G_N_Cl",this.N_Cl);
+					setifdef("G_pH",sigFigs(this.pH,4));
+					//+" | [H<sup>+</sup>]="+sigFigs(this.C_H,3)+" | [OH<sup>-</sup>]="+sigFigs(this.C_OH,3));
+					setifdef("G_HperATPase",sigFigs(this.HperATPase,3));
+					setifdef("G_N_ATP_u_s",sigFigs(this.N_ATP_s_o/this.N_ATPase_o,3));
+					setifdef("G_N_ATP_s_o",sigFigs(this.N_ATP_s_o,6));
+					setifdef("G_ATPturnover",sigFigs(ATPturnover,5));
+					setifdef("G_Pct_ATPase",sigFigs(Pct_ATPase,4));
+					drawSparkline();
+				}
+			};
+			
+			this.writeOutput = function()
+			{
+				if (skip && (step-2)%skip) return; // && step>1000
+				var table = document.getElementById("outputTable");
+				var tr = document.createElement("tr");
+				var td = document.createElement('td');
+				
+				for (var i=0; i < varsArray.length ;++i)
+				{
+					td = document.createElement('td');
+					if (typeof eval("this."+varsArray[i]) === "undefined")
+						td.innerHTML = sigFigs(eval(varsArray[i]),6);
+					else
+						td.innerHTML = sigFigs(eval("this."+varsArray[i]),6);
+					tr.appendChild(td); 
+				}
+				table.appendChild(tr);
+			};
+						
+			this.HOH_equil = function()
+			{
+				if (this.N_H<0)  {alert("ERROR! The number of H+ is negative!");}
+				if (this.N_OH<0) {alert("ERROR! The number of OH- is negative!");}
+				// kill or create H and OH until equilibrium is reached
+				while (this.N_H*this.N_OH<EQUIL) { ++this.N_H; ++this.N_OH; } // i.e. dissociate one water
+				while (this.N_H*this.N_OH>EQUIL && this.N_H>0 && this.N_OH>0) { --this.N_H; --this.N_OH; } // i.e. form one water
+				
+				if (this.N_OH > this.N_H) // the cell is ALKALINE
+				{
+					// recalculate the concentration of H+ and OH-
+					this.C_OH = this.CFromN(this.N_OH);
+					this.C_H = KW/this.C_OH;
+					// the pH will be determined by the [OH-]
+					this.pH = 14 + log10(this.C_OH);
+				}
+				else // (this.N_H >= this.N_OH) the cell is ACIDIC
+				{
+					// recalculate the concentration of H+ and OH-
+					this.C_H = this.CFromN(this.N_H);
+					this.C_OH = KW/this.C_H;
+					// the pH will be determined by the [H+]
+					this.pH = -log10(this.C_H);
+				}
+
+			};
+			
+			this.getMembFlux = function(perm, C_1, C_2, A, DeltaPsi)
+			{
+				// DESC: uses the goldman-hodgkin-katz flux equation to determine ion flux through the membrane 
+				// in the presence of membrane potential delta psi, or a simpler flux equation if there is no delta psi
+				if (DeltaPsi == 0)
+				{
+					return perm*(C_1 - C_2)*M3_TO_L*A*tStep*AVOG;
+				}
+				else // there is membrane potential, use the GHK flux equation
+				{
+                    ghkExp=Math.exp(-DeltaPsi/RT_F);
+					return ( perm * (DeltaPsi/RT_F) * ((C_1 - C_2*ghkExp)/(1-ghkExp)) * M3_TO_L*A*tStep*AVOG );
+				}
+			};
+            
+			this.bioenergise = function()
+			{
+				// DESC: calculates the bioenergetic values
+				
+				// DeltaPsi
+				// EXP: Since there are different concentrations of ions in the ocean and vent sides, the membrane potential
+				//		is different for each side.
+                this.DeltaPsi_o = RT_F*Math.log((prmH*C_H_o + prmOH*this.C_OH + prmNa*C_Na_o + prmK*C_K_o + prmCl*this.C_Cl)/(prmH*this.C_H + prmOH*C_OH_o + prmNa*this.C_Na + prmK*this.C_K + prmCl*C_Cl_o));
+                this.DeltaPsi_v = RT_F*Math.log((prmH*C_H_v + prmOH*this.C_OH + prmNa*C_Na_v + prmK*C_K_v + prmCl*this.C_Cl)/(prmH*this.C_H + prmOH*C_OH_v + prmNa*this.C_Na + prmK*this.C_K + prmCl*C_Cl_v));
+                
+				// Delta G for the PROTON H+ gradient
+				this.DeltaG_H_o  = -F*this.DeltaPsi_o + RT23*(pHo-this.pH);
+				this.DeltaG_H_v  = -F*this.DeltaPsi_v + RT23*(pHv-this.pH);
+				// Delta G for the SODIUM Na gradient
+				this.DeltaG_Na_o = -F*this.DeltaPsi_o + RT*Math.log(this.C_Na/C_Na_o);
+				this.DeltaG_Na_v = -F*this.DeltaPsi_v + RT*Math.log(this.C_Na/C_Na_v);
+				// Like the DeltaPsi, the total free energy must be calculated separately for each side
+				
+				// now we can calculate a total
+				this.DeltaG_o = this.DeltaG_H_o + this.DeltaG_Na_o;
+				this.DeltaG_v = this.DeltaG_H_v + this.DeltaG_Na_v;
+			};
+			
+			this.iterate = function()
+			{
+                this.Delta_pH_o = this.pH+log10(C_H_o);
+				this.Delta_pH_v = this.pH+log10(C_H_v);
+				this.Delta_pNa_o = log10(C_Na_o/this.C_Na);
+				this.Delta_pNa_v = log10(C_Na_v/this.C_Na);
+				
+				///////////////////////
+				//   Membrane flux   //
+				///////////////////////
+				// ion transfer through the OCEAN-SIDE MEMBRANE in this timestep
+				N_H_in_o  =  this.getMembFlux(prmH , C_H_o    , this.C_H , this.A_o, this.DeltaPsi_o);
+				N_OH_in_o = -this.getMembFlux(prmOH, this.C_OH, C_OH_o   , this.A_o, this.DeltaPsi_o);
+				N_Na_in_o =  this.getMembFlux(prmNa, C_Na_o   , this.C_Na, this.A_o, this.DeltaPsi_o);
+				N_K_in_o  =  this.getMembFlux(prmK , C_K_o    , this.C_K , this.A_o, this.DeltaPsi_o);
+				N_Cl_in_o = -this.getMembFlux(prmCl, this.C_Cl, C_Cl_o   , this.A_o, this.DeltaPsi_o);
+				
+				// ion transfer through the VENT-SIDE MEMBRANE in this timestep
+				N_H_in_v  =  this.getMembFlux(prmH , C_H_v    , this.C_H , this.A_v, this.DeltaPsi_v);
+				N_OH_in_v = -this.getMembFlux(prmOH, this.C_OH, C_OH_v   , this.A_v, this.DeltaPsi_v);
+				N_Na_in_v =  this.getMembFlux(prmNa, C_Na_v   , this.C_Na, this.A_v, this.DeltaPsi_v);
+				N_K_in_v  =  this.getMembFlux(prmK , C_K_v    , this.C_K , this.A_v, this.DeltaPsi_v);
+				N_Cl_in_v = -this.getMembFlux(prmCl, this.C_Cl, C_Cl_v   , this.A_v, this.DeltaPsi_v);
+                
+                ///// END MEMBRANE /////
+				
+				///////////////////////
+				//      ATPase       //
+				///////////////////////
+				// How many ATP molecules were synthesised in this turn?
+				// sigmoid gets a number between 1 and -1, depending on how close the total DeltaG is to the saturation value of the ATPase
+				this.N_ATP_H_s_o  = sigmoid(this.DeltaG_H_o ,ATPase_sat)*ATPturnover*this.N_ATPase_o; // so this gets the number of ATP synthesised (or destroyed) per second per ATPase unit due to H+ gradient 
+				this.N_ATP_Na_s_o = sigmoid(this.DeltaG_Na_o,ATPase_sat)*ATPturnover*this.N_ATPase_o*(1-posSigmoid(this.C_Na,4,2)); // and this for the Na+ gradient
+				// the last term in the sodium equation above was added to avoid absurd concentrations of Na+ building up within the cell
+				// Biologically, it can be seen as an anticipated toxicity effect of too high Na+ inside the cell
+				
+                
+				// the numbers could be negative, but the ATPases as a whole can only operate at their maximum turnover rate
+				// so a way of weighing for that is to check whether the total number of reactions is higher than what's possible
+				sumAbs_o = Math.abs(this.N_ATP_H_s_o) + Math.abs(this.N_ATP_Na_s_o);
+				if (sumAbs_o > ATPturnover)
+				{
+					// and in that case, need to weigh them down proportionally
+					this.N_ATP_H_s_o  *= Math.abs(this.N_ATP_H_s_o) /sumAbs_o;
+					this.N_ATP_Na_s_o *= Math.abs(this.N_ATP_Na_s_o)/sumAbs_o;
+				}
+				this.N_ATP_s_o   = this.N_ATP_H_s_o + this.N_ATP_Na_s_o; // trivially, the total number of ATP molecules synthesised (or destroyed) in 1 s is the sum of those due to H+ and Na+
+				N_H_in_ATPase_o  = this.N_ATP_H_s_o *tStep*HperATP; // how many H+ come in through all of the ATPases in this timestep
+				N_Na_in_ATPase_o = this.N_ATP_Na_s_o*tStep*HperATP; // same, for Na+
+				
+                // How many H+ per ATPase unit per s?
+                this.HperATPase_o = N_H_in_ATPase_o/(this.N_ATPase_o*tStep);
+                    
+                // and for the vent side, if we have the ATPase operating on that side (not the default)
+                if (doATPase_v)
+                {
+                    this.N_ATP_H_s_v  = sigmoid(this.DeltaG_H_v ,ATPase_sat)*ATPturnover*this.N_ATPase_v;
+                    this.N_ATP_Na_s_v = sigmoid(this.DeltaG_Na_v,ATPase_sat)*ATPturnover*this.N_ATPase_v*(1-posSigmoid(this.C_Na,4,2));
+                    
+				    sumAbs_v = Math.abs(this.N_ATP_H_s_v) + Math.abs(this.N_ATP_Na_s_v);
+                    if (sumAbs_v > ATPturnover)
+                    {
+                        this.N_ATP_H_s_v  *= Math.abs(this.N_ATP_H_s_v) /sumAbs_v;
+                        this.N_ATP_Na_s_v *= Math.abs(this.N_ATP_Na_s_v)/sumAbs_v;
+                    }
+                    this.N_ATP_s_v   = this.N_ATP_H_s_v + this.N_ATP_Na_s_v; // trivially, the total number of ATP molecules synthesised (or destroyed) in 1 s is the sum of those due to H+ and Na+
+                    N_H_in_ATPase_v  = this.N_ATP_H_s_v *tStep*HperATP; // how many H+ come in through all of the ATPases in this timestep
+                    N_Na_in_ATPase_v = this.N_ATP_Na_s_v*tStep*HperATP; // same, for Na+
+                    
+                    // How many H+ per ATPase unit per s?
+                    this.HperATPase_v = N_H_in_ATPase_v/(this.N_ATPase_v*tStep);
+				}
+                else
+                {
+                    this.N_ATP_H_s_v  = 0;
+                    this.N_ATP_Na_s_v = 0;
+                    N_H_in_ATPase_v   = 0;
+                    N_Na_in_ATPase_v  = 0;
+                }
+				
+				///// END ATPase /////
+
+				//////////////////////
+				//        Ech       //
+				//////////////////////
+				// How many H+/Na+ does the Ech import (or export!) in this turn?
+				// all equations are analogous to the ATPase above
+				N_H_in_Ech 	= sigmoid(this.DeltaG_H_o ,Ech_sat)*EchTurnover*this.N_Ech_o*HperEch*tStep;
+				N_Na_in_Ech	= sigmoid(this.DeltaG_Na_o,Ech_sat)*EchTurnover*this.N_Ech_o*HperEch*tStep;
+				sumAbs = Math.abs(N_H_in_Ech) + Math.abs(N_Na_in_Ech)
+				if (sumAbs/HperEch > EchTurnover)
+				{
+					N_H_in_Ech 	*= Math.abs(N_H_in_Ech) /sumAbs;
+					N_Na_in_Ech	*= Math.abs(N_Na_in_Ech)/sumAbs;
+				}
+				///// END Ech /////
+
+
+				////////////////////
+				//      SPAP      //
+				////////////////////
+				SPAP_DeltaDeltaG_sat = -ATPase_sat; // saturation of the SPAP is set equal to that of the ATPase: at this gradient size, it reaches saturation
+				//PsiFactor = 1+sigmoid(this.Delta_psi,2);
+				
+				//N_H_in_SPAP_o = sigmoid((this.Delta_pH_o - this.Delta_pNa_o),SPAPsat)*PsiFactor*SPAPturnover*this.N_SPAP_o*tStep;
+				N_H_in_SPAP_o = doubleSigmoid((this.DeltaG_Na_o - this.DeltaG_H_o),SPAP_DeltaDeltaG_sat)*SPAPturnover*this.N_SPAP_o*tStep;
+				if (SPAP_v)
+                {
+                    N_H_in_SPAP_v = doubleSigmoid((this.DeltaG_Na_v - this.DeltaG_H_v),SPAP_DeltaDeltaG_sat)*SPAPturnover*this.N_SPAP_v*tStep;
+                }
+                else N_H_in_SPAP_v = 0;
+				N_H_in_SPAP = N_H_in_SPAP_o + N_H_in_SPAP_v;
+				
+				// Na+ through the SPAP
+				N_Na_in_SPAP_o = -N_H_in_SPAP_o/HperNa;
+				if (SPAP_v)
+                {
+                    N_Na_in_SPAP_v = -N_H_in_SPAP_v/HperNa;
+                }
+				else N_Na_in_SPAP_v = 0;
+                N_Na_in_SPAP = N_Na_in_SPAP_o + N_Na_in_SPAP_v;
+				///// END SPAP /////
+				
+				
+				////////////////////
+				//    PUMPING     //
+				////////////////////
+				if (HvsNa < 1) // pumping H+
+				{
+					N_H_in_pump_o = -sigmoid(this.C_H2,pump_H2_sat)*pumpTurnover*this.N_pump_o*(1-HvsNa)*tStep;//
+					N_H_in_pump_v = -pump_v*sigmoid(this.C_H2,pump_H2_sat)*pumpTurnover*this.N_pump_v*(1-HvsNa)*tStep;//*(1-sigmoid(this.Delta_pH_v,pump_grad_sat));
+					//posSigmoid gets a number between 0 and 1
+				}
+				else { N_H_in_pump_o = N_H_in_pump_v = 0; }
+				if (HvsNa > 0) // pumping Na+
+				{
+					N_Na_in_pump_o = -sigmoid(this.C_H2,pump_H2_sat)*pumpTurnover*this.N_pump_o*HvsNa*tStep;//*(1-sigmoid(this.Delta_pNa_o,pump_grad_sat));
+					N_Na_in_pump_v = -pump_v*sigmoid(this.C_H2,pump_H2_sat)*pumpTurnover*this.N_pump_v*HvsNa*tStep;//*(1-sigmoid(this.Delta_pNa_v,pump_grad_sat));
+				}
+				else { N_Na_in_pump_o = N_Na_in_pump_v = 0; }
+				
+				// if there's an opposing gradient, the pump is weakend up to zero, whereas if the gradient is favourable,
+				// the pump can work up to twice as fast
+				if (pumpVsGrad)
+				{
+					N_H_in_pump_o  *= (1-sigmoid(this.Delta_pH_o, pump_grad_sat));
+					N_H_in_pump_v  *= (1-sigmoid(this.Delta_pH_v, pump_grad_sat));
+					N_Na_in_pump_o *= (1-sigmoid(this.Delta_pNa_o,pump_grad_sat));
+					N_Na_in_pump_v *= (1-sigmoid(this.Delta_pNa_v,pump_grad_sat));
+				}
+				
+				///// END PUMP /////
+				
+				
+				///////////////////////
+				//      TOTALS       //
+				///////////////////////
+				
+				// H+ total that come in (or leave if negative)
+				N_H_in_total = N_H_in_o + N_H_in_v + N_H_in_ATPase_o + N_H_in_ATPase_v + N_H_in_Ech + N_H_in_SPAP_o + N_H_in_SPAP_v + N_H_in_pump_o + N_H_in_pump_v + this.N_H_rem;
+				D_N_H = Math.round(N_H_in_total);
+				this.N_H_rem = N_H_in_total - D_N_H;
+				
+				// the total number of OH that come in (or leave if negative) can be added to the respective number of protons
+				// to give a pseudo total number of protons:
+				N_OH_in_total = N_OH_in_o + N_OH_in_v + this.N_OH_rem;
+				D_N_OH = Math.round(N_OH_in_total);
+				this.N_OH_rem = N_OH_in_total - D_N_OH;
+				
+				// total sodium
+				N_Na_in_total = N_Na_in_o + N_Na_in_v + N_Na_in_ATPase_o + N_Na_in_ATPase_v + N_Na_in_Ech + N_Na_in_SPAP_o + N_Na_in_SPAP_v + N_Na_in_pump_o + N_Na_in_pump_v + this.N_Na_rem;
+				D_N_Na = Math.round(N_Na_in_total);
+				this.N_Na_rem = N_Na_in_total - D_N_Na;
+				
+				// total potassium
+				N_K_in_total = N_K_in_o + N_K_in_v + this.N_K_rem;
+				D_N_K = Math.round(N_K_in_total);
+				this.N_K_rem = N_K_in_total - D_N_K;
+				
+				// total chlorine
+				N_Cl_in_total = N_Cl_in_o + N_Cl_in_v + this.N_Cl_rem;
+				D_N_Cl = Math.round(N_Cl_in_total);
+				this.N_Cl_rem = N_Cl_in_total - D_N_Cl;
+				
+				
+				if (updateGraphs) 
+				{
+					// Note: this is actually writing the results of the previous iteration!
+					// i.e. all the fun stuff happens below. This will (may) be improved in a later version
+					// write down the change
+					setifdef("G_D_N_OH"," (T:"+D_N_OH+"|o:"+Math.round(N_OH_in_o)+"|v:"+Math.round(N_OH_in_v)+")");
+					setifdef("G_D_N_H"," (T:"+D_N_H+"|o:"+Math.round(N_H_in_o)+"|v:"+Math.round(N_H_in_v)+"|a:"+Math.round(N_H_in_ATPase_o)+"|e:"+Math.round(N_H_in_Ech)+"|so:"+Math.round(N_H_in_SPAP_o)+"|sv:"+Math.round(N_H_in_SPAP_v)+"|po:"+Math.round(N_H_in_pump_o)+"|pv:"+Math.round(N_H_in_pump_v)+")");
+					setifdef("G_D_N_Na"," (T:"+D_N_Na+"|o:"+Math.round(N_Na_in_o)+"|v:"+Math.round(N_Na_in_v)+"|a:"+Math.round(N_Na_in_ATPase_o)+"|e:"+Math.round(N_Na_in_Ech)+"|so:"+Math.round(N_Na_in_SPAP_o)+"|sv:"+Math.round(N_Na_in_SPAP_v)+"|po:"+Math.round(N_Na_in_pump_o)+"|pv:"+Math.round(N_Na_in_pump_v)+")");
+					setifdef("G_D_N_K"," (T:"+D_N_K+"|o:"+Math.round(N_K_in_o)+"|v:"+Math.round(N_K_in_v)+")");
+					setifdef("G_D_N_Cl"," (T:"+D_N_Cl+"|o:"+Math.round(N_Cl_in_o)+"|v:"+Math.round(N_Cl_in_v)+")");
+					//setifdef("G_Delta_pH_o",sigFigs(this.Delta_pH_o,4));
+					setifdef("G_C_Na",sigFigs(this.C_Na,4));
+					setifdef("G_C_K",sigFigs(this.C_K,4));
+					setifdef("G_C_Cl",sigFigs(this.C_Cl,4));
+					setifdef("G_DeltaPsi_o",sigFigs(this.DeltaPsi_o,4));
+					setifdef("G_DeltaPsi_v",sigFigs(this.DeltaPsi_v,4));
+					setifdef("G_DeltaG_o",sigFigs(this.DeltaG_o,5));
+				}
+				// before updating the main indicators of the cell status, print the output of the previous status
+				// plus the change that is occurring in this run, in a table to be imported into R or wherever
+				this.writeOutput();
+				
+				this.N_Na += D_N_Na;
+				if (this.N_Na < 0)
+				{
+					confirm("ERROR:\n[Na+] out of bounds.\n\nYour time step might be too large!\nDo you want to reset?") ? document.location='index.html' : 1; 
+				}
+				this.C_Na = this.CFromN(this.N_Na);
+				
+				this.N_K += D_N_K;
+				if (this.N_K < 0)
+				{
+					confirm("ERROR:\n[K+] out of bounds.\n\nYour time step might be too large!\nDo you want to reset?") ? document.location='index.html' : 1; 
+				}
+				this.C_K = this.CFromN(this.N_K);
+				
+				this.N_Cl += D_N_Cl;
+				if (this.N_Cl < 0)
+				{
+					confirm("ERROR:\n[Cl-] out of bounds.\n\nYour time step might be too large!\nDo you want to reset?") ? document.location='index.html' : 1; 
+				}
+				this.C_Cl = this.CFromN(this.N_Cl);
+				
+				// the total number of protons in the pc will be the sum of what was already there, plus what came in
+				// minus the OH that were already there, minus the OH that came in
+				this.N_H = Math.round(this.N_H + N_H_in_total - this.N_OH - N_OH_in_total);
+				this.N_OH = 0; // because all have been anti-added to the protons
+				
+				if (this.N_H < 0)
+				{
+					this.N_OH = -this.N_H;
+					this.N_H = 0;
+				}
+				
+                // kill or create H and OH until equilibrium is reached
+				this.HOH_equil();
+				
+				// finally, update all the graphics and increase the time counter
+				this.updateGraphics();
+				this.bioenergise();
+				
+				this.t += tStep;
+			};
+            
+			// INITIALISATIONS!
+			
+			// DEFINE AND INITIALISE ATTRIBUTES
+			this.d = d;		// diameter [m]
+			this.N_H;		// number of protons inside the protocell (discrete)
+			this.N_OH;		// number of hydroxyls in the protocell (discrete)
+			this.N_Na;		// number of Na+ ions in the protocell (discrete)
+			this.N_K;		// number of K+ ions in the protocell (discrete)
+			this.N_Cl;		// number of Cl- ions in the protocell (discrete)
+			this.pH;		// internal pH of the protocell
+			this.t = 0;		// time
+			this.N_ATP_s_o= 0;
+			this.N_ATP_s_v= 0;
+						
+			// remainder of H,OH,Na in every time step
+			this.N_H_rem  = 0;
+			this.N_OH_rem = 0;
+			this.N_Na_rem = 0;
+			this.N_K_rem  = 0;
+			this.N_Cl_rem = 0;
+			
+			// volume [m3] and surface area [m2]
+			this.A = Math.PI*Math.pow(this.d,2);
+			this.V = Math.PI*Math.pow(this.d,3)/6;
+			
+			this.set_areas();
+			
+            // EQUIL is the product of N_OH times N_H that would satisfy the equilibrium dissociation constant of water (KW)
+			EQUIL = Math.round(KW*this.V*M3_TO_L*AVOG*this.V*M3_TO_L*AVOG); // can't square because JavaScript cannot take such large/small numbers
+			
+			// number of H+ and OH- ions in the protocell (discrete)
+			this.C_H	= C_H_v;
+			this.N_H	= this.NFromC(this.C_H);
+			this.C_OH	= C_OH_v;
+			this.N_OH	= this.NFromC(this.C_OH);
+			
+			// Na,K,Cl concentration at the onset equal that of the vent
+			this.C_Na = C_Na_v;
+			this.N_Na = this.NFromC(this.C_Na);
+			this.C_K = C_K_v;
+			this.N_K = this.NFromC(this.C_K);
+			this.C_Cl = C_Cl_v;
+			this.N_Cl = this.NFromC(this.C_Cl);
+			
+            this.C_H2 = C_H2_v*ventPct/100; // this is assumed to be constant
+			
+            
+			this.Delta_pH_o = -999;
+			this.Delta_pNa_o = -999;
+			
+			if (this.C_OH>this.C_H) this.set_pH_from_pOH();
+			else this.set_pH();
+			
+			
+			this.HperATPase = 0;
+			N_H_in_ATPase = 0;
+			// update display of values that won't change
+			setifdef("G_A",sigFigs(this.A,3));
+			setifdef("G_V",sigFigs(this.V,3));
+			setifdef("G_N_ATPase_o",Math.round(this.N_ATPase_o));
+				
+			this.bioenergise();
+			this.updateGraphics();
+			
+		};
+		////////// end ProtoCell Class prototype definition ///////////
+		///////////////////////////////////////////////////////////////
+		
+		var t = 0;	// total time that has passed
+		var step = 0;
+		var pHoStep = -1;
+		var pHvStep = -1;
+		var C_H_o;
+		var C_H_v;
+		var C_OH_o;
+		var C_OH_v;
+		var C_H_start;
+		var C_OH_start;
+		var C_Na_start;
+		var pc;
+		var initialise=true;
+		var updateGraphs = true;
+		var csvtxt = "";
+			
+		function set_Pct_nonLipid() { Pct_nonLipid = Pct_ATPase + Pct_Ech + Pct_SPAP + Pct_pump; if(pc){pc.set_areas();} }
+		
+		function iterate()
+		{
+			setifdef("G_t",sigFigs(t,4));
+			++step;
+			t+=tStep;
+            
+			if (initialise)
+			{
+				initialise = false;
+				
+				// the concentrations in the vent will be equal to those in the ocean
+                C_K_v   = C_K_o;
+                C_Cl_v  = C_Cl_o;
+				// however, the Na concentration will be corrected to give zero charge total
+                C_Na_v  = C_Na_o + C_OH_v - C_H_v;
+                
+                // and now do the same correction for the ocean Na concentration
+                C_Na_o  = C_Na_o + C_OH_o - C_H_o;
+                
+                // total area of things in the membrane that aren't lipid (%)
+				set_Pct_nonLipid();
+				
+				// initialise the protocell
+				pc = new ProtoCell();
+				
+				
+				// clear the Sparkline arrays
+				Arr_pH = new Array();
+				//Arr_N_H = new Array();
+				//Arr_N_OH = new Array();
+				Arr_Delta_psi = new Array();
+				Arr_DeltaG_o = new Array();
+				
+				// change the text in the iteration button from "Start" to "Iterate"
+				$("#B_iterate span").text('Iterate!');
+				// and show the "iterate 10 times" and 100 buttons
+				$("#B_iterate10").removeClass('hidden');
+				$("#B_iterate100").removeClass('hidden');
+				$("#B_iterate1k").removeClass('hidden');
+				$("#B_iterate10k").removeClass('hidden');
+				$("#B_iterate100k").removeClass('hidden');
+				$("#B_iterate1M").removeClass('hidden');
+				$("#B_iterate10M").removeClass('hidden');
+				$("#B_iterate100M").removeClass('hidden');
+				
+				// create a table to hold output values 
+				var table = document.getElementById("outputTable");
+				var tr = document.createElement("tr");
+				var th = document.createElement('th');
+				
+				// add the header row to the output table
+				for (var i=0; i < varsArray.length ;++i)
+				{
+					th = document.createElement('th');
+					th.innerHTML = varsArray[i];
+					tr.appendChild(th);
+				}
+				
+				table.appendChild(tr);
+				return;
+			}
+			pc.iterate();
+		}
+		
+		// SPARKLINES
+		var SPK_WIDTH = 300;
+	    var SPK_HEIGHT = 150;
+		
+		var HLLC = '#888'; // highlight line colour
+		var LINE_COLS = new Array();
+			LINE_COLS['pH'] 	= '#47F';
+			LINE_COLS['N_H']	= '#D22';
+			LINE_COLS['N_OH']	= '#2B2';
+			LINE_COLS['Delta_psi']	= '#BAE';
+			//LINE_COLS['']		= '#B284BE';
+		
+		// declare the arrays that will hold the values to be plotted
+		var Arr_pH = new Array();
+		//var Arr_N_H = new Array();
+		//var Arr_N_OH = new Array();
+		var Arr_Delta_psi = new Array();
+		var Arr_DeltaG_o = new Array();
+		
+		function drawSparkline()
+		{
+			// Delta G sparkline
+			if (doDeltaGPlot)
+			{
+				$("#spkln_DeltaG_o").sparkline(Arr_DeltaG_o, {
+					type:"line", width:SPK_WIDTH*3.3, height:SPK_HEIGHT*3, fillColor:false, valueSpots:null, highlightLineColor:HLLC
+				});
+			}
+		}
+	</script>
+	
+</head>
+<body>
+<h1>Membrane Bioenergetics Model v0.32 :: V&iacute;ctor Sojo</h1>
+
+<!-- Accordion: Parameters -->
+<div id="parameters">
+	<h3>Parameters</h3>
+	<div>
+		<fieldset name="pH">
+			<legend>pH and concentrations</legend>
+			<table class="param_table">
+			<tr>
+			<td>
+				<!-- pHo - OCEAN pH - slider -->
+				<p>
+					<label for="pHo_val">pH<sub>o</sub> | ocean pH:</label>
+					<span id="pHo_val" class="parval"> </span>
+				</p>
+				<div id="pHo_slider"></div>
+			</td>
+			<td>
+				<!-- pHv - vent pH - slider -->
+				<p>
+					<label for="pHv_val">pH<sub>v</sub> | vent pH:</label>
+					<span id="pHv_val" class="parval"> </span>
+				</p>
+				<div id="pHv_slider"></div>
+			</td>
+			</tr>
+			<tr>
+			<td>
+				<!-- C_Na_o | Na concentration in the ocean | two spinners -->
+				<p>
+					<label for="C_Na_o_val">C_Na_o | [Na<sup>+</sup>]<sub>ocean</sub>:</label>
+					<span id="C_Na_o_val" class="parval"> </span> mol L<sup>-1</sup>
+				</p>
+				<input id="C_Na_o_N_spinner" name="C_Na_o_N_spinner" value="">
+				x10
+				<input id="C_Na_o_E_spinner" name="C_Na_o_E_spinner" value="">
+			</td>
+			<td>
+				<!-- C_K_o | K concentration in the ocean | two spinners -->
+				<p>
+					<label for="C_K_o_val">C_K_o | [K<sup>+</sup>]<sub>ocean</sub>:</label>
+					<span id="C_K_o_val" class="parval"> </span> mol L<sup>-1</sup>
+				</p>
+				<input id="C_K_o_N_spinner" name="C_K_o_N_spinner" value="">
+				x10
+				<input id="C_K_o_E_spinner" name="C_K_o_E_spinner" value="">
+			</td>
+			</tr>
+			<tr>
+			<td>
+				<!-- C_Cl_o | Cl concentration in the ocean | two spinners -->
+				<p>
+					<label for="C_Cl_o_val">C_Cl_o | [Cl<sup>-</sup>]<sub>ocean</sub>:</label>
+					<span id="C_Cl_o_val" class="parval"> </span> mol L<sup>-1</sup>
+				</p>
+				<input id="C_Cl_o_N_spinner" name="C_Cl_o_N_spinner" value="">
+				x10
+				<input id="C_Cl_o_E_spinner" name="C_Cl_o_E_spinner" value="">
+			</td>
+			<td>
+				<!-- C_H2_v | H2 concentration in the vent | two spinners -->
+				<p>
+					<label for="C_H2_v_val">C_H2_v | [H<sub>2</sub>]<sub>vent</sub>:</label>
+					<span id="C_H2_v_val" class="parval"> </span> mol L<sup>-1</sup>
+				</p>
+				<input id="C_H2_v_N_spinner" name="C_H2_v_N_spinner" value="">
+				x10
+				<input id="C_H2_v_E_spinner" name="C_H2_v_E_spinner" value="">
+			</td>
+			</tr>
+			</table>
+		</fieldset>
+		<fieldset name="permeability">
+		<legend>permeability</legend>
+		<table class="param_table">
+			<tr>
+			<td>
+				<!-- prmH | Membrane permeability to H+ | two spinners -->
+				<p>
+					<label for="prmH_val">prm<sub>H</sub> | permeability to H<sup>+</sup>:</label>
+					<span id="prmH_val" class="parval"> </span> cm s<sup>-1</sup>
+				</p>
+				<input id="prmH_N_spinner" name="prmH_N_spinner" value="">
+				x10
+				<input id="prmH_E_spinner" name="prmH_E_spinner" value="">
+			</td>
+			<td>
+				<!-- prmOH | Membrane permeability to OH- | two spinners -->
+				<p>
+					<label for="prmOH_val">prm<sub>OH</sub> | permeability to OH<sup>-</sup>:</label>
+					<span id="prmOH_val" class="parval"> </span> cm s<sup>-1</sup>
+				</p>
+				<input id="prmOH_N_spinner" name="prmOH_N_spinner" value="">
+				x10
+				<input id="prmOH_E_spinner" name="prmOH_E_spinner" value="">
+			</td>
+			</tr>
+			<tr>
+			<td>
+				<!-- prmNa - Membrane permeability to Na+ | two spinners -->
+				<p>
+					<label for="prmNa_val">prm<sub>Na</sub> | permeability to Na<sup>+</sup>:</label>
+					<span id="prmNa_val" class="parval"> </span> cm s<sup>-1</sup>
+				</p>
+				<input id="prmNa_N_spinner" name="prmNa_N_spinner" value="">
+				x10
+				<input id="prmNa_E_spinner" name="prmNa_E_spinner" value="">
+			</td>
+			<td>
+				<!-- prmK - Membrane permeability to K+ | two spinners -->
+				<p>
+					<label for="prmK_val">prm<sub>K</sub> | permeability to K<sup>+</sup>:</label>
+					<span id="prmK_val" class="parval"> </span> cm s<sup>-1</sup>
+				</p>
+				<input id="prmK_N_spinner" name="prmK_N_spinner" value="">
+				x10
+				<input id="prmK_E_spinner" name="prmK_E_spinner" value="">
+			</td>
+			</tr>
+			<tr>
+			<td>
+				<!-- prmCl - Membrane permeability to Cl- | two spinners -->
+				<p>
+					<label for="prmCl_val">prm<sub>Cl</sub> | permeability to Cl<sup>-</sup>:</label>
+					<span id="prmCl_val" class="parval"> </span> cm s<sup>-1</sup>
+				</p>
+				<input id="prmCl_N_spinner" name="prmCl_N_spinner" value="">
+				x10
+				<input id="prmCl_E_spinner" name="prmCl_E_spinner" value="">
+			</td>
+			<td>
+			</td>
+			</tr>
+		</table>
+		</fieldset>
+		<fieldset name="ATPaseParams">
+			<legend>ATP synthase</legend>
+			<table class="param_table">
+			<tr>
+			<td title="Number of protons per ATP synthesised">
+				<!-- HperATP | Protons per ATP | slider -->
+				<p>
+					<label for="HperATP_val">HperATP | Number of H<sup>+</sup> per ATP synthesised:</label>
+					<span id="HperATP_val" class="parval"> </span> H<sup>+</sup>/ATP
+				</p>
+				<div id="HperATP_slider"></div>
+			</td>
+			<td title="Percentage of the proto-cell surface that corresponds to ATP synthase">
+				<!-- Pct_ATPase | vent percentage | slider -->
+				<p>
+					<label for="Pct_ATPase_val">Pct_ATPase | % of ATP synthase in surface:</label>
+					<span id="Pct_ATPase_val" class="parval"> </span>%
+				</p>
+				<input id="Pct_ATPase_N_spinner" name="Pct_ATPase_N_spinner" value="">
+				x10
+				<input id="Pct_ATPase_E_spinner" name="Pct_ATPase_E_spinner" value="">
+			</td>
+			</tr>
+			<tr>
+			<td title="Area of membrane-embedded ATP synthase Fo sub-unit">
+				<!-- A_Fo | ATP synthase area | slider -->
+				<p>
+					<label for="A_Fo_val">A_Fo | Area of each ATPase F<sub>o</sub> subunit:</label>
+					<span id="A_Fo_val" class="parval"> </span> m<sup>2</sup>
+				</p>
+				<input id="A_Fo_N_spinner" name="A_Fo_N_spinner" value="">
+				x10
+				<input id="A_Fo_E_spinner" name="A_Fo_E_spinner" value="">
+			</td>
+			<td title="Maximum number of ATP molecules that each ATPase unit can synthesise in a second">
+				<!-- ATPturnover - Max speed of ATP production | two spinners -->
+				<p>
+					<label for="ATPturnover_val">ATP max turnover:</label>
+					<span id="ATPturnover_val" class="parval"> </span> ATP s<sup>-1</sup>
+				</p>
+				<input id="ATPturnover_N_spinner" name="ATPturnover_N_spinner" value="">
+				x10
+				<input id="ATPturnover_E_spinner" name="ATPturnover_E_spinner" value="">
+			</td>
+			</tr>
+			<tr>	
+			<td title="ATPase Delta G saturation level">
+				<!-- ATPase_sat | Saturation Delta G of the ATPase | spinner -->
+				<p>
+					<label for="ATPase_sat_val">ATPase_sat | Saturation &Delta;G of ATPase:</label>
+					<span id="ATPase_sat_val" class="parval"> </span> kJ/mol
+				</p>
+				&Delta;G = <input id="ATPase_sat_spinner" name="ATPase_sat_spinner" value=""> kJ/mol
+			</td>
+            <td title="Should the ATPase operate towards the vent? (not advisable)">
+                <label for="doATPase_v"><input type="checkbox" name="doATPase_v" id="doATPase_v" checked onchange="doATPase_v=document.getElementById('doATPase_v').checked;"/> ATPase on v side?</label>
+            </td>
+			</tr>
+			</table>
+		</fieldset> <!-- end ATPase -->
+		
+		<fieldset name="EchParams">
+			<legend>Energy-converting hydrogenase (Ech)</legend>
+			<table class="param_table">
+			<tr>
+			<td title="Number of protons per Ech turn">
+				<!-- HperEch | Protons per Ech turn | slider -->
+				<p>
+					<label for="HperEch_val">HperEch | Number of H<sup>+</sup> per Ech turn:</label>
+					<span id="HperEch_val" class="parval"> </span> H<sup>+</sup>
+				</p>
+				<div id="HperEch_slider"></div>
+			</td>
+			<td title="Percentage of the proto-cell surface that corresponds to Ech (Energy-converting hydrogenase)">
+				<!-- Pct_Ech | vent percentage | slider -->
+				<p>
+					<label for="Pct_Ech_val">Pct_Ech | %Ech in surface:</label>
+					<span id="Pct_Ech_val" class="parval"> </span>%
+				</p>
+				<input id="Pct_Ech_N_spinner" name="Pct_Ech_N_spinner" value="">
+				x10
+				<input id="Pct_Ech_E_spinner" name="Pct_Ech_E_spinner" value="">
+			</td>
+			</tr>
+			<tr>
+			<td title="Area of membrane-embedded ATP synthase Fo sub-unit">
+				<!-- A_Ech | ATP synthase area | slider -->
+				<p>
+					<label for="A_Ech_val">A_Ech | Area of each Ech unit:</label>
+					<span id="A_Ech_val" class="parval"> </span> m<sup>2</sup>
+				</p>
+				<input id="A_Ech_N_spinner" name="A_Ech_N_spinner" value="">
+				x10
+				<input id="A_Ech_E_spinner" name="A_Ech_E_spinner" value="">
+			</td>
+			<td title="Maximum reaction rate of the Ech">
+				<!-- EchTurnover - Max speed of ATP production | two spinners -->
+				<p>
+					<label for="EchTurnover_val">Ech max turnover:</label>
+					<span id="EchTurnover_val" class="parval"> </span> s<sup>-1</sup>
+				</p>
+				<input id="EchTurnover_N_spinner" name="EchTurnover_N_spinner" value="">
+				x10
+				<input id="EchTurnover_E_spinner" name="EchTurnover_E_spinner" value="">
+			</td>
+			</tr>
+			</table>
+		</fieldset><!-- end Ech -->
+		
+		<fieldset name="SPAP">
+		<legend>Na<sup>+</sup>/H<sup>+</sup> antiporter (SPAP)</legend>
+		<table class="param_table">
+			<tr>
+			<td>
+				<!-- HperNa | Protons per Na | slider -->
+				<p>
+					<label for="HperNa_val">HperNa | Number of H<sup>+</sup> per Na<sup>+</sup> extruded:</label>
+					<span id="HperNa_val" class="parval"> </span> H<sup>+</sup>/Na<sup>+</sup>
+				</p>
+				<div id="HperNa_slider"></div>
+			</td>
+			<td title="Percentage of the proto-cell surface that corresponds to Na+/H+ Antiporter">
+				<!-- Pct_SPAP | SPAP percentage | slider -->
+				<p>
+					<label for="Pct_SPAP_val">Pct_SPAP | % of Na<sup>+</sup>/H<sup>+</sup> antiporter in surface:</label>
+					<span id="Pct_SPAP_val" class="parval"> </span>%
+				</p>
+				<input id="Pct_SPAP_N_spinner" name="Pct_SPAP_N_spinner" value="">
+				x10
+				<input id="Pct_SPAP_E_spinner" name="Pct_SPAP_E_spinner" value="">
+			</td>
+			</tr>
+			<tr>
+			<td title="Area of each Sodium/Proton antiporter (SPAP)">
+			<!-- A_SPAP | SPAP area | two spinners -->
+			<p>
+				<label for="A_SPAP_val">A_SPAP | Area of each Na<sup>+</sup>/H<sup>+</sup> antiporter:</label>
+				<span id="A_SPAP_val" class="parval"> </span> m<sup>2</sup>
+			</p>
+			<input id="A_SPAP_N_spinner" name="A_SPAP_N_spinner" value="">
+			x10
+			<input id="A_SPAP_E_spinner" name="A_SPAP_E_spinner" value="">
+			</td>
+			<td title="Maximum number of protons per each SPAP per second">
+				<!-- SPAPturnover - Max number of protons imported per unit per second | two spinners -->
+				<p>
+					<label for="SPAPturnover_val">SPAPturnover | Max H<sup>+</sup> per SPAP per s:</label>
+					<span id="SPAPturnover_val" class="parval"> </span> H<sup>+</sup> SPAP<sup>-1</sup> s<sup>-1</sup>
+				</p>
+				<input id="SPAPturnover_N_spinner" name="SPAPturnover_N_spinner" value="">
+				x10
+				<input id="SPAPturnover_E_spinner" name="SPAPturnover_E_spinner" value="">
+			</td>
+			</tr>
+			<tr>
+			<td>
+				<!-- SPAPdissip | dissipation factor of the SPAP | slider -->
+				<p>
+					<label for="SPAPdissip_val">SPAPdissip | Attenuation factor of the SPAP:</label>
+					<span id="SPAPdissip_val" class="parval"> </span>
+				</p>
+				<div id="SPAPdissip_slider"></div>
+			</td>
+			<td>
+				<label for="SPAP_v"><input type="checkbox" name="SPAP_v" id="SPAP_v" onchange="SPAP_v=document.getElementById('SPAP_v').checked;"/> SPAP towards vent</label>
+			</td>
+			</tr>
+		</table>
+		</fieldset>
+		
+		<fieldset name="pump">
+			<legend>Pump!</legend>
+			<table class="param_table">
+			<tr>
+			<td>
+				<!-- HNaPerPump | H/Na per pump per second | slider -->
+				<p>
+					<label for="HvsNa_val">HvsNa | Proportion of Na<sup>+</sup> (vs. H<sup>+</sup>) pumped:</label>
+					<span id="HvsNa_val" class="parval"> </span> Na<sup>+</sup>
+				</p>
+				<div id="HvsNa_slider"></div>
+			</td>
+			<td title="Percentage of the proto-cell surface that corresponds to H+|Na+ pump">
+				<!-- Pct_SPAP | SPAP percentage | slider -->
+				<p>
+					<label for="Pct_pump_val">Pct_pump | % of H<sup>+</sup>|Na<sup>+</sup> pump in surface:</label>
+					<span id="Pct_pump_val" class="parval"> </span>%
+				</p>
+				<input id="Pct_pump_N_spinner" name="Pct_pump_N_spinner" value="">
+				x10
+				<input id="Pct_pump_E_spinner" name="Pct_pump_E_spinner" value="">
+			</td>
+			</tr>
+			<tr>
+			<td title="Area of each Proton|Sodium Pump">
+			<!-- A_pump | A_pump area | two spinners -->
+			<p>
+				<label for="A_pump_val">A_pump | Area of each H<sup>+</sup>|Na<sup>+</sup> pump:</label>
+				<span id="A_pump_val" class="parval"> </span> m<sup>2</sup>
+			</p>
+			<input id="A_pump_N_spinner" name="A_pump_N_spinner" value="">
+			x10
+			<input id="A_pump_E_spinner" name="A_pump_E_spinner" value="">
+			</td>
+			<td title="Maximum number of protons per each SPAP per second">
+				<!-- SPAPturnover - Max number of protons imported per unit per second | two spinners -->
+				<p>
+					<label for="pumpTurnover_val">pumpTurnover | Max H<sup>+</sup>|Na<sup>+</sup> per pump per s:</label>
+					<span id="pumpTurnover_val" class="parval"> </span> H<sup>+</sup>|Na<sup>+</sup> pump<sup>-1</sup> s<sup>-1</sup>
+				</p>
+				<input id="pumpTurnover_N_spinner" name="pumpTurnover_N_spinner" value="">
+				x10
+				<input id="pumpTurnover_E_spinner" name="pumpTurnover_E_spinner" value="">
+			</td>
+			</tr>
+			<tr>
+			<td>
+				<label for="pump_v"><input type="checkbox" name="pump_v" id="pump_v" onchange="pump_v=document.getElementById('pump_v').checked;"/> Pump towards vent</label>
+				&nbsp;| <label for="pumpVsGrad"><input type="checkbox" name="pumpVsGrad" id="pumpVsGrad" onchange="pump_v=document.getElementById('pumpVsGrad').checked;"/> Respond to gradient</label>
+			</td>
+			<td>
+				
+			</td>
+			</tr>
+			<tr>
+			<td title="Hydrogen concentration at which the pump saturates">
+				<!-- pump_H2_sat | Saturation [H2] of the pump | spinner -->
+				<p>
+					<label for="pump_H2_sat_val">pump_H2_sat | Saturation [H<sub>2</sub>]:</label>
+					<span id="pump_H2_sat_val" class="parval"> </span> mol/L
+				</p>
+				[H<sub>2</sub>] = <input id="pump_H2_sat_spinner" name="pump_H2_sat_spinner" value=""> mol/L
+			</td>
+			<td title="If there's an opposing gradient this big, the pump is weakend up to zero.\nIf the gradient is favourable and this big or larger, the pump can work up to twice as fast.">
+				<!-- pump_grad_sat | gradient saturation value | spinner | spinner -->
+				<p>
+					<label for="pump_grad_sat_val">pump_H2_sat | Saturation [H<sub>2</sub>]:</label>
+					<span id="pump_grad_sat_val" class="parval"> </span> log units
+				</p>
+				Opposing &Delta;Gradient = <input id="pump_grad_sat_spinner" name="pump_grad_sat_spinner" value=""> log units
+			</td>
+			</tr>
+		</table>
+		</fieldset>
+		
+		<fieldset name="miscel">
+			<legend>Miscelaneous parameters</legend>
+			<table class="param_table">
+			<tr>
+			<td title="Duration of each time step. 1min=3.6x10^3 s; 1h=0.86x10^5 s">
+				<!-- tStep | duration of each time step -->
+				<p>
+					<label for="tStep_val">tStep | duration of each time step:</label>
+					<span id="tStep_val" class="parval"> </span> s
+				</p>
+				1x10<input id="tStep_spinner" name="tStep_spinner" value=""> s
+			</td>
+			<td title="Diameter of the proto-cell">
+				<!-- d - cell diameter - slider -->
+				<p>
+					<label for="d_val">d | proto-cell diameter:</label>
+					<span id="d_val" class="parval"> </span> m
+				</p>
+				<input id="d_N_spinner" name="d_N_spinner" value="">
+				x10
+				<input id="d_E_spinner" name="d_E_spinner" value="">
+			</td>
+			</tr>
+			<tr>
+			<td title="Percentage of the proto-cell surface that is exposed to the vent (the rest is assumed to face the ocean)">
+				<!-- ventPct - vent percentage - slider -->
+				<p>
+					<label for="ventPct_val">ventPct | % surface facing vent:</label>
+					<span id="ventPct_val" class="parval"> </span>%
+				</p>
+				<div id="ventPct_slider"></div>
+			</td>
+            <td>
+			</td>
+			</tr>
+			</table>
+		</fieldset>
+		<label for="doDeltaGPlot"><input type="checkbox" name="doDeltaGPlot" id="doDeltaGPlot" checked onchange="doDeltaGPlot=document.getElementById('doDeltaGPlot').checked;"/> Do &Delta;G plot?</label>
+	  | <label for="skipper" title="How many results do you want to skip from the text output? Make very large if you don't want any text output">Skip:
+		 	<select name="skipper" id="skipper" onchange="skip=document.getElementById('skipper').value">
+		 		<option value="0">0</option>
+		 		<option value="10">10</option>
+		 		<option value="100">100</option>
+		 		<option value="1000">1,000</option>
+		 		<option value="10000">10,000</option>
+		 		<option value="100000">100,000</option>
+		 		<option value="1000000">1,000,000</option>
+		 	</select> iterations
+		 </label>
+	</div>
+	<h3>Output</h3>
+	<div>
+		<table id="outputTable"></table>
+	</div>
+</div>
+
+<div id="cell_and_plots">
+	<div id="G">
+		<div id="G_OceanTexts">
+			<p>pH<sub>o</sub> = <span id="G_pHo"></span></p>
+			<p>[Na<sup>+</sup>]<sub>o</sub> = <span id="G_C_Na_o"></span> mol L<sup>-1</sup></p>
+			<p>[K<sup>+</sup>]<sub>o</sub> = <span id="G_C_K_o"></span> mol L<sup>-1</sup></p>
+			<p>[Cl<sup>-</sup>]<sub>o</sub> = <span id="G_C_Cl_o"></span> mol L<sup>-1</sup></p>
+		</div>
+		<div id="G_Rock">
+			<div id="G_L_RockTexts">
+				<p title="Diameter of the protocell">d = <span id="G_d"></span> m</p>
+				<p title="Surface area of the protocell">A = <span id="G_A"></span> m<sup>2</sup></p>
+				<p title="Volume of the protocell">V = <span id="G_V"></span> m<sup>3</sup></p>
+				<p>[H<sub>2</sub>]<sub>v</sub> = <span id="G_C_H2_v"></span> mol L<sup>-1</sup></p>
+				<p>pH<sub>v</sub> = <span id="G_pHv"></span></p>
+			</div>
+			<div id="G_R_RockTexts">
+				<p>t = <span id="G_t"></span> s</p>
+				<p>ventPct = <span id="G_ventPct"></span>%</p>
+				<p>tStep = <span id="G_tStep"></span> s</p>
+				<p>T = <span id="G_T"></span> K</p>
+			</div>
+		</div>
+		<div id="G_ProtoCell">
+			<div id="G_ATPaseTexts">
+				<!--p>A_Fo  = <span id="G_A_Fo"></span>x10<sup>-17</sup> m<sup>2</sup></p-->
+				<p><span id="G_HperATP"></span> H<sup>+</sup>/ATP | <span id="G_HperNa"></span> H<sup>+</sup>/Na<sup>+</sup></p>
+				<p><span id="G_Pct_ATPase"></span>% ATPase | <span id="G_Pct_Ech"></span>% Ech | <span id="G_Pct_SPAP"></span>% SPAP | <span id="G_Pct_pump"></span>% pump</p>
+				<p class="var" title="Number of hydroxyde ions in the protocell"><span id="G_N_OH"></span> OH<sup>-</sup> <span id="G_D_N_OH"></span></p>
+				<p class="var" title="Number of protons in the protocell"><span id="G_N_H"></span> H<sup>+</sup> <span id="G_D_N_H"></span></p>
+				<p class="var" title="Number of Na+ ions in the protocell"><span id="G_N_Na"></span> Na<sup>+</sup> <span id="G_D_N_Na"></span></p>
+				<p class="var" title="Number of K+ and Cl- ions in the protocell"><span id="G_N_K"></span> K<sup>+</sup> <span id="G_D_N_K"></span> || <span id="G_N_Cl"></span> Cl<sup>-</sup> <span id="G_D_N_Cl"></span></p>
+				<!--p class="var" title="Number of H2 molecules in the protocell"><span id="G_N_H2"></span> H<sub>2</sub> <span id="G_D_N_H2"></span></p-->
+				<p class="var" title="Energetics!">pH=<span id="G_pH"></span> | &Delta;&psi;<sub>o</sub>=<span id="G_DeltaPsi_o"></span> mV | &Delta;&psi;<sub>v</sub>=<span id="G_DeltaPsi_v"></span> mV | &Delta;G<sub>o</sub>=<span id="G_DeltaG_o"></span> kJ/mol</p>
+				<p class="var" title="Concentrations">[Na<sup>+</sup>]=<span id="G_C_Na"></span> | [K<sup>+</sup>]=<span id="G_C_K"></span> | [Cl<sup>-</sup>]=<span id="G_C_Cl"></span></p>
+				<p class="var" title="Number of H+ per ATPase"><span id="G_HperATPase"></span> H<sup>+</sup> unit<sup>-1</sup> s<sup>-1</sup> | <span id="G_N_ATP_u_s"></span> ATP unit<sup>-1</sup> s<sup>-1</sup> | <span id="G_N_ATP_s_o"></span> ATP s<sup>-1</sup></p>
+			</div>
+			<div id="G_ProtoCellTexts">
+				<p><span id="G_N_ATPase_o"></span> ATPase units | <span id="G_ATPturnover"></span> ATP unit<sup>-1</sup> s<sup>-1</sup></p>
+				<p>prmH = <span id="G_prmH"></span> cm s<sup>-1</sup></p>
+				<p>prmNa = <span id="G_prmNa"></span> cm s<sup>-1</sup></p>
+			</div>
+		</div>
+	</div> <!-- Protocell display -->
+</div> <!-- Cell and plots -->
+<script>
+	var clear = 1000;
+	var start = 0;	
+	function clearArrays()
+	{
+		// DESC: keeps only one every "clear" results from the DeltaG plot
+		var tempArr = Arr_pH;
+		Arr_pH = new Array();
+		for (var i=start; i<tempArr.length; i+=clear)
+		{
+			Arr_pH.push(tempArr[i]);
+		}
+		tempArr = Arr_Delta_psi;
+		Arr_Delta_psi = new Array();
+		for (var i=start; i<tempArr.length; i+=clear)
+		{
+			Arr_Delta_psi.push(tempArr[i]);
+		}
+		tempArr = Arr_DeltaG_o;
+		Arr_DeltaG_o = new Array();
+		for (var i=start; i<tempArr.length; i+=clear)
+		{
+			Arr_DeltaG_o.push(tempArr[i]);
+		}
+		//start = tempArr.length;
+		tempArr = new Array();
+	}
+</script>
+
+<!-- Reset all parameters to default values - Button -->
+<button id="B_reset" onclick="document.location='index.html';">Reset</button>
+<button id="B_iterate" onclick="iterate();"><span>Start!</span></button>
+
+<button id="B_iterate10" onclick="updateGraphs=false; for (var i=0; i<9; ++i) {iterate();}; updateGraphs=true; iterate();" class="hidden">Iterate 10 times</button>
+<button id="B_iterate100" onclick="updateGraphs=false; for (var i=0; i<99; ++i) {iterate();}; updateGraphs=true; iterate();" class="hidden">x100</button>
+<button id="B_iterate1k" onclick="updateGraphs=false; for (var i=0; i<999; ++i) {iterate();}; updateGraphs=true; iterate();" class="hidden">x1k</button>
+<button id="B_iterate10k" onclick="updateGraphs=false; for (var i=0; i<9999; ++i) {iterate();}; updateGraphs=true; iterate();" class="hidden">x10k</button>
+<button id="B_iterate100k" onclick="updateGraphs=false; for (var i=0; i<99999; ++i) {iterate();}; updateGraphs=true; iterate();" class="hidden">x100k</button>
+<button id="B_iterate1M" onclick="updateGraphs=false; for (var i=0; i<999999; ++i) {iterate();}; updateGraphs=true; iterate();" class="hidden">x1M(!)</button>
+<button id="B_iterate10M" onclick="for (var i=0; i<10; ++i) {document.getElementById('B_iterate1M').click()}; alert('I am done!');" class="hidden">x10M(!!)</button>
+<button id="B_iterate100M" onclick="for (var i=0; i<100; ++i) {document.getElementById('B_iterate1M').click()}; alert('I am done!');" class="hidden">x100M(!!!)</button>
+<button id="clear" onclick="clearArrays()">Clear arrays!</button>
+    
+<div id="plots">
+	<div id="spkln_DeltaG_o"></div>
+</div>
+<br/>
+</body>
+<footer>
+	<hr/>
+	<br/>
+	<br/>
+</footer>
+</html>

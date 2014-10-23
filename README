@@ -2,8 +2,9 @@ This document explains how to use the Membrane Bioenergetics model of Sojo, Lane
 
 The code was written by Victor Sojo (v.sojo.11@ucl.ac.uk), designed in collaboration with Nick Lane (n.lane@ucl.ac.uk), and analysed by all three authors.
 
+TO DOWNLOAD: click on "Download ZIP" from the GitHub options on the right.
 
-To run the code, just open "index.html" on any web browser (Firefox, Chrome, Safari, Opera... or Internet Explorer if you truly must...).
+TO RUN: just open "index.html" on any web browser (Firefox, Chrome, Safari, Opera... or Internet Explorer if you truly must...).
 
 Select your parameters and click Start, then Iterate.
 
